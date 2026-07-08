@@ -1,0 +1,258 @@
+import { defineStore } from 'pinia'
+import { ref, computed } from 'vue'
+import type { Token, Jenjang, StikerNewsSetting } from '@/types'
+import { logMasuk, fetchSetting, saveSetting, login as loginDashboard, logout as logoutDashboard, scanUniqId as scanUniqIdApi, apiProv, apiKab, apiFormTrial } from '@/services/api'
+import { usePlayerStore } from '@/stores/player'
+
+/**
+ * Token lokal untuk demo / fallback offline.
+ * Format token berisi kode jenjang, sehingga dari kode
+ * kita bisa tahu jenjang sekolahnya (SD/SMP/SMA/SMK).
+ * id_user adalah SpeedQ user ID yang dipakai untuk call API.
+ */
+const VALID_TOKENS: Record<string, Token> = {
+  'SD-2024-ABC': { code: 'SD-2024-ABC', jenjang: 'SD', expiresAt: '2027-12-31', schoolName: 'SDN Contoh', teacherName: 'Bu Sari', id_user: 2 },
+  'SMP-2024-XYZ': { code: 'SMP-2024-XYZ', jenjang: 'SMP', expiresAt: '2027-12-31', schoolName: 'SMPN Contoh', teacherName: 'Pak Budi', id_user: 2 },
+  'SMA-2024-DEF': { code: 'SMA-2024-DEF', jenjang: 'SMA', expiresAt: '2027-12-31', schoolName: 'SMAN Contoh', teacherName: 'Pak Ahmad', id_user: 2 },
+  'SMK-2024-GHI': { code: 'SMK-2024-GHI', jenjang: 'SMK', expiresAt: '2027-12-31', schoolName: 'SMKN Contoh', teacherName: 'Bu Dewi', id_user: 2 },
+  'DEMO-001': { code: 'DEMO-001', jenjang: 'SMP', expiresAt: '2027-12-31', schoolName: 'Demo School', teacherName: 'Demo Teacher', id_user: 51466 },
+}
+
+export const useAuthStore = defineStore('auth', () => {
+  interface LinkedUser { name: string; token: string; userId: string, photo: string }
+  const linkedUser = ref<LinkedUser | null>(
+    JSON.parse(localStorage.getItem('sn_linked_user') ?? 'null')
+  )
+  const token = ref<any>(
+    localStorage.getItem('sn_token')
+  )
+  const setting = ref<StikerNewsSetting>({ auto_play: 1, play_mode: 0 })
+  const settingLoaded = ref(false)
+  const loading = ref(false)
+
+  // Info site dari dashboard API
+  const siteName = ref<string | null>(localStorage.getItem('sn_site_name'))
+  const siteLogo = ref<string | null>(localStorage.getItem('sn_site_logo'))
+  const isTrial = ref<boolean | null>(localStorage.getItem('sn_trial') === '1' ? true : false)
+  const expiredDate = ref<string | null>(localStorage.getItem('sn_expired_at'))
+  const estimationDay = ref<string | null>(localStorage.getItem('sn_estimation_day'))
+
+  const isLoggedIn = computed(() => {
+    if (!token.value) return false
+    return true
+    // return new Date(token.value.expiresAt) > new Date()
+  })
+
+  const jenjang = computed<Jenjang | null>(() => token.value?.jenjang ?? null)
+
+  const userId = computed<number>(() => token.value?.id_user ?? 2)
+
+  // ── login ──────────────────────────────────────────────────────────────────
+  async function login(code: string): Promise<{ success: boolean; error?: string }> {
+    // const found = VALID_TOKENS[code.toUpperCase().trim()]
+
+    // if (!found) return { success: false, error: 'Token tidak ditemukan' }
+    // if (new Date(found.expiresAt) <= new Date()) return { success: false, error: 'Token sudah kadaluarsa' }
+
+    // token.value = found
+    // localStorage.setItem('sn_token', JSON.stringify(found))
+
+    // ← Login ke dashboard API untuk dapat accessToken & refreshToken
+
+    loading.value = true
+
+    try {
+      const dashboardRes = await loginDashboard(code.trim())
+      if (dashboardRes?.data) {
+        siteName.value = dashboardRes.data.name_site ?? null
+        siteLogo.value = dashboardRes.data.logo_site ?? null
+        isTrial.value = dashboardRes.data.isTrial ?? false
+        expiredDate.value = dashboardRes.data.expired_at ?? false
+        estimationDay.value = dashboardRes.data.sisa_hari_aktif ?? false
+        token.value = dashboardRes.data.tokens.accessToken ?? null
+        localStorage.setItem('sn_token', String(token.value))
+        if (siteName.value) localStorage.setItem('sn_site_name', siteName.value)
+        if (siteLogo.value) localStorage.setItem('sn_site_logo', siteLogo.value)
+        if (isTrial.value) localStorage.setItem('sn_trial', isTrial.value ? '1' : '0')
+        if (expiredDate.value) localStorage.setItem('sn_expired_at', expiredDate.value)
+        if (estimationDay.value) localStorage.setItem('sn_estimation_day', estimationDay.value)
+      }
+
+      console.log(dashboardRes);
+
+      return dashboardRes
+    } catch (e) {
+      console.warn('[login] dashboard login failed (non-critical):', e)
+    } finally {
+      loading.value = false
+    }
+
+    // Non-blocking: log masuk & load setting
+    // logMasuk(found.id_user ?? 2)
+    loadSetting()
+
+    return { success: false }
+  }
+
+  // ── logout ─────────────────────────────────────────────────────────────────
+  function logout() {
+    const playerStore = usePlayerStore()
+
+    // ✅ Stop audio sebelum clear session
+    playerStore.stop()
+    playerStore.clearPreview()
+    playerStore.setNullQueue()
+    playerStore.resetPlayer()
+
+    // Reset currentTrack agar BottomPlayer hilang
+    playerStore.currentTrack = null
+
+    token.value = null
+    settingLoaded.value = false
+    siteName.value = null
+    siteLogo.value = null
+    localStorage.removeItem('sn_token')
+    localStorage.removeItem('sn_access_token')
+    localStorage.removeItem('sn_refresh_token')
+    localStorage.removeItem('sn_site_name')
+    localStorage.removeItem('sn_site_logo')
+    localStorage.removeItem('sn_trial')
+    localStorage.removeItem('sn_linked_user')
+    localStorage.removeItem('sn_expired_at')
+    localStorage.removeItem('sn_estimation_day')
+    localStorage.removeItem('playlist_selected')
+    localStorage.removeItem('classos_session_state')
+    localStorage.removeItem('classos_id_state')
+    logoutDashboard() // ← hapus accessToken & refreshToken dari localStorage
+  }
+
+  // ── setting ────────────────────────────────────────────────────────────────
+  async function loadSetting() {
+    if (!token.value?.id_user) return
+    try {
+      const data = await fetchSetting(token.value.id_user)
+      if (data) {
+        setting.value = {
+          auto_play: data.auto_play ?? 1,
+          play_mode: data.play_mode ?? 0,
+        }
+      }
+    } catch (e) {
+      console.warn('[loadSetting] fallback to default:', e)
+    } finally {
+      settingLoaded.value = true
+    }
+  }
+
+  async function updateSetting(patch: Partial<StikerNewsSetting>) {
+    if (!token.value?.id_user) return
+    setting.value = { ...setting.value, ...patch }
+    try {
+      await saveSetting({
+        userid: token.value.id_user,
+        auto_play: setting.value.auto_play as 0 | 1,
+        play_mode: setting.value.play_mode as 0 | 1,
+      })
+    } catch (e) {
+      console.warn('[updateSetting] save failed:', e)
+    }
+  }
+
+  // Load setting jika sudah login saat app boot
+  if (isLoggedIn.value && token.value?.id_user) {
+    loadSetting()
+  }
+
+  async function scanUniqId(code: string): Promise<{ success: boolean; error?: string; data?: any }> {
+    loading.value = true
+
+    try {
+      const res = await scanUniqIdApi(code.trim(), token.value ?? undefined)
+
+      if (res?.data) {
+        return {
+          success: true,
+          data: res.data,
+        }
+      }
+
+      return {
+        success: false,
+        error: res?.message ?? 'Kode tidak valid atau sudah kadaluarsa.',
+      }
+    } catch (e: any) {
+      console.warn('[scanUniqId] failed:', e)
+      return {
+        success: false,
+        error: e?.response?.data?.message ?? 'Gagal memverifikasi. Periksa koneksi internet.',
+      }
+    } finally {
+      loading.value = false
+    }
+  }
+
+  // ── Trial Form ─────────────────────────────────────────────────────────────
+  const provList = ref<{ id: string | number; nama: string }[]>([])
+  const kabList = ref<{ id: string | number; nama: string }[]>([])
+  const loadingProv = ref(false)
+  const loadingKab = ref(false)
+  const loadingSubmitTrial = ref(false)
+
+  async function fetchProv() {
+    loadingProv.value = true
+    try {
+      const res = await apiProv()
+      provList.value = res?.data ?? []
+    } catch (e) {
+      console.warn('[fetchProv] failed:', e)
+    } finally {
+      loadingProv.value = false
+    }
+  }
+
+  async function fetchKab(idProv: string | number) {
+    loadingKab.value = true
+    kabList.value = []
+    try {
+      const res = await apiKab(idProv)
+      kabList.value = res?.data ?? []
+    } catch (e) {
+      console.warn('[fetchKab] failed:', e)
+    } finally {
+      loadingKab.value = false
+    }
+  }
+
+  async function submitFormTrial(data: {
+    nama_sekolah: string
+    nama_pengisi: string
+    nomor_wa: string
+    id_provinsi: string | number
+    provinsi: string
+    id_kabupaten_kota: string | number
+    kabupaten_kota: string
+    jumlah_kelas: string | number
+    jumlah_smartboard: string | number
+    pakai_smart_tv: string | number
+    pakai_ac: string | number
+  }): Promise<{ success: boolean; error?: string }> {
+    loadingSubmitTrial.value = true
+    try {
+      const res = await apiFormTrial(data)
+      if (res?.data || res?.success) {
+        localStorage.setItem('sn_trial_survey_done', '1')
+        return { success: true }
+      }
+      return { success: false, error: res?.message ?? 'Gagal menyimpan data.' }
+    } catch (e: any) {
+      console.warn('[submitFormTrial] failed:', e)
+      return { success: false, error: e?.response?.data?.message ?? 'Terjadi kesalahan. Coba lagi.' }
+    } finally {
+      loadingSubmitTrial.value = false
+    }
+  }
+
+  return {
+    token, isLoggedIn, jenjang, userId, setting, settingLoaded, siteName, siteLogo, isTrial, loading, linkedUser, provList, kabList, loadingProv, loadingKab, loadingSubmitTrial, expiredDate, estimationDay, fetchProv, fetchKab, submitFormTrial, scanUniqId, login, logout, loadSetting, updateSetting
+  }
+})

@@ -1,0 +1,12 @@
+{
+  "name": "StikerNews Pelajar",
+  "short_name": "StikerNews",
+  "description": "Platform edukasi interaktif untuk pelajar Indonesia",
+  "theme_color": "#1DB954",
+  "background_color": "#121212",
+  "display": "standalone",
+  "start_url": "/",
+  "icons": [
+    { "src": "/favicon.ico", "sizes": "64x64", "type": "image/x-icon" }
+  ]
+}
