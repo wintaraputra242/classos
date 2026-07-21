@@ -12,12 +12,14 @@ import FavoriteSection from '@/components/favorite-history/FavoriteSection.vue'
 import HistorySection from '@/components/favorite-history/HistorySection.vue'
 import ConfirmChangeAccountModal from '@/components/ui/ConfirmChangeAccountModal.vue'
 import ErrorVerificationAccountModal from '@/components/ui/ErrorVerificationAccountModal.vue'
+import { useClassSessionStore } from '@/stores/classSession'
 
 const playerStore = usePlayerStore()
 const activeTab = ref('favorit')
 const router = useRouter()
 const auth = useAuthStore()
 const contentStore = useContentStore()
+const classSession = useClassSessionStore()
 
 const tabs = computed(() => [
   { id: 'favorit', label: '❤️ Favorit & Playlist', count: null },
@@ -129,17 +131,32 @@ function closeScanner() {
 async function startCamera() {
   cameraError.value = ''
 
+  // ← Untuk QR scan, resolusi sedang justru lebih optimal
+  // Resolusi terlalu tinggi membuat jsQR lambat dan tidak akurat
   const constraints = [
-    { video: { width: { ideal: 1920 }, height: { ideal: 1080 } } },
-    { video: { width: { ideal: 1280 }, height: { ideal: 720 } } },
-    { video: { width: { min: 640 }, height: { min: 480 } } },
+    { video: { width: { ideal: 1280 }, height: { ideal: 720 }, facingMode: 'environment' } },
+    { video: { width: { ideal: 640 }, height: { ideal: 480 }, facingMode: 'environment' } },
+    { video: { facingMode: 'environment' } },
     { video: true },
   ]
 
   for (const constraint of constraints) {
     try {
       cameraStream = await navigator.mediaDevices.getUserMedia(constraint)
-      if (videoRef.value) videoRef.value.srcObject = cameraStream
+
+      if (videoRef.value) {
+        videoRef.value.srcObject = cameraStream
+
+        // ← Tunggu video benar-benar siap sebelum mulai scan
+        await new Promise<void>((resolve) => {
+          videoRef.value!.onloadedmetadata = () => {
+            videoRef.value!.play().then(() => resolve()).catch(() => resolve())
+          }
+        })
+
+        // ← Beri jeda kamera warming up
+        await new Promise(r => setTimeout(r, 300))
+      }
 
       const settings = cameraStream.getVideoTracks()[0]?.getSettings()
       console.log('[qr-camera] resolusi:', settings?.width, 'x', settings?.height)
@@ -154,30 +171,76 @@ async function startCamera() {
   cameraError.value = 'Kamera tidak dapat diakses. Gunakan kode manual.'
 }
 
+
 function stopCamera() {
   cameraStream?.getTracks().forEach(t => t.stop())
   cameraStream = null
   if (qrInterval) { clearInterval(qrInterval); qrInterval = null }
+
+  // Terminate worker saat scanner ditutup
+  if (_qrWorker) {
+    _qrWorker.terminate()
+    _qrWorker = null
+    _workerBusy = false
+  }
 }
+
+let _qrWorker: Worker | null = null
+let _workerBusy = false
 
 function startQrScan() {
-  const canvas = document.createElement('canvas')
-  const context = canvas.getContext('2d')!
+  if (qrInterval) { clearInterval(qrInterval); qrInterval = null }
 
+  // Init worker
+  if (!_qrWorker) {
+    _qrWorker = new Worker('/qr-worker.js')
+    _qrWorker.onmessage = (e) => {
+      _workerBusy = false
+      const result = e.data.result
+      if (!result) return
+
+      const now = Date.now()
+      if (result === _lastQrResult && now - _lastQrTime < 3000) return
+
+      _lastQrResult = result
+      _lastQrTime = now
+
+      clearInterval(qrInterval!)
+      qrInterval = null
+      verifyCode(result)
+    }
+  }
+
+  const canvas = document.createElement('canvas')
+  const context = canvas.getContext('2d', { willReadFrequently: true })!
+
+  // Interval lebih lambat — worker yang kerja keras, bukan main thread
   qrInterval = setInterval(() => {
-    if (!videoRef.value || videoRef.value.readyState < 2) return
     const video = videoRef.value
-    canvas.width = video.videoWidth
-    canvas.height = video.videoHeight
+    if (!video || video.readyState < 2 || video.videoWidth === 0) return
+    if (_workerBusy) return // skip kalau worker masih proses frame sebelumnya
+
+    // Downscale ke 400px — cukup untuk jsQR, lebih ringan
+    const maxW = 400
+    const scale = Math.min(1, maxW / video.videoWidth)
+    canvas.width = Math.floor(video.videoWidth * scale)
+    canvas.height = Math.floor(video.videoHeight * scale)
+
     context.drawImage(video, 0, 0, canvas.width, canvas.height)
     const imageData = context.getImageData(0, 0, canvas.width, canvas.height)
-    const code = jsQR(imageData.data, imageData.width, imageData.height, { inversionAttempts: 'dontInvert' })
-    if (code?.data) {
-      clearInterval(qrInterval!)
-      verifyCode(code.data)
-    }
-  }, 300)
+
+    _workerBusy = true
+    // Transfer buffer ke worker — zero-copy, tidak berat
+    _qrWorker!.postMessage(
+      { data: imageData.data, width: canvas.width, height: canvas.height },
+      [imageData.data.buffer]
+    )
+  }, 250) // interval lebih santai karena worker async
 }
+
+let _lastQrResult = ''
+let _lastQrTime = 0
+
 
 async function submitManual() {
   if ((manualCode.value?.length ?? 0) < 6 || verifying.value) return
@@ -361,22 +424,41 @@ async function openPlaylistDetail(playlist: typeof selectedPlaylist.value) {
   await contentStore.loadDetailPlaylistContent(String(playlist!.id))
 }
 
+function clearTeacherStorage() {
+  const keysToRemove = [
+    // Data guru
+    'sn_linked_user',
+
+    // Data konten & cache
+    'classos_player_history',
+    'classos_duration_cache',
+
+    // Data sesi mengajar
+    'classos_session_state',
+    'classos_id_state',
+    'classos_listening',
+    'classos_transcript_log',
+    'classos_brief_cache',
+    'classos_summarize_cache',
+    'playlist_selected',
+  ]
+
+  keysToRemove.forEach(key => localStorage.removeItem(key))
+}
+
 const showConfirmGanti = ref(false)
 
 function confirmGantiAkun() {
   showConfirmGanti.value = false
 
-  // 1. Stop TTS jika ada
-  if (typeof window.responsiveVoice !== 'undefined') {
-    window.responsiveVoice.cancel()
+  if (typeof (window as any).responsiveVoice !== 'undefined') {
+    (window as any).responsiveVoice.cancel()
   } else {
     window.speechSynthesis?.cancel()
   }
 
-  // 2. Stop kamera scanner jika sedang aktif
   closeScanner()
 
-  // 3. Reset tab dan data konten
   activeMenuTab.value = 'favorit'
   loadedTabs.value.clear()
   selectedPlaylist.value = null
@@ -384,21 +466,17 @@ function confirmGantiAkun() {
   contentStore.playlistItems = []
   contentStore.detailPlaylistItems = []
 
-  // 4. Putuskan linkedUser
   linkedUser.value = null
-  localStorage.removeItem('sn_linked_user')
-
-  // 5. Reset player history
   playerStore.history = []
-  localStorage.removeItem('classos_player_history')
-  localStorage.removeItem('classos_duration_cache')
-
-  // 6. Tutup popup
   showTrackPopup.value = false
 
-  // 7. Buka scanner untuk akun baru
-  openScanner()
+  // ✅ Hapus semua storage terkait guru
+  clearTeacherStorage()
 
+  // Reset session state di store
+  classSession.resetSession()
+
+  openScanner()
   playChime('/sounds/logout-teacher.mp3')
 }
 
@@ -442,18 +520,16 @@ const handleClickDetailPlaylistItem = (item: any) => {
   playerStore.setItemPlay(track, queueTracks)
 }
 
+
 function disconnectTeacher() {
-  // 1. Stop TTS jika ada
-  if (typeof window.responsiveVoice !== 'undefined') {
-    window.responsiveVoice.cancel()
+  if (typeof (window as any).responsiveVoice !== 'undefined') {
+    (window as any).responsiveVoice.cancel()
   } else {
     window.speechSynthesis?.cancel()
   }
 
-  // 2. Stop kamera scanner jika aktif
   closeScanner()
 
-  // 3. Reset tab dan data konten
   activeMenuTab.value = 'favorit'
   loadedTabs.value.clear()
   selectedPlaylist.value = null
@@ -461,21 +537,25 @@ function disconnectTeacher() {
   contentStore.playlistItems = []
   contentStore.detailPlaylistItems = []
 
-  // 4. Putuskan linkedUser
   linkedUser.value = null
-  localStorage.removeItem('sn_linked_user')
-
-  // 5. Reset player history
   playerStore.history = []
-  localStorage.removeItem('classos_player_history')
-  localStorage.removeItem('classos_duration_cache')
-
-  // 6. Tutup popup jika ada
   showTrackPopup.value = false
   showConfirmGanti.value = false
 
+  // ✅ Hapus semua storage terkait guru
+  clearTeacherStorage()
+
+  // Reset session state di store
+  classSession.resetSession()
+
   playChime('/sounds/logout-teacher.mp3')
 }
+
+const photoError = ref(false)
+
+watch(() => linkedUser.value?.photo, () => {
+  photoError.value = false
+})
 
 onMounted(() => {
   if (linkedUser.value) {
@@ -526,17 +606,18 @@ onUnmounted(() => {
     </div>
 
     <!-- ── Favorite ─────────────────────────────────────────────────── -->
-    <FavoriteSection v-if="activeTab === 'favorit'" :linked-user="linkedUser" :show-scanner="showScanner"
-      :active-menu-tab="activeMenuTab" :current-menu-items="currentMenuItems" :selected-playlist="selectedPlaylist"
-      :verify-error="verifyError" :scan-mode="scanMode" :manual-code="manualCode" :verifying="verifying"
-      :camera-error="cameraError" :video-ref="videoRef" @open-scanner="openScanner" @close-scanner="closeScanner"
-      @disconnect="disconnectTeacher" @show-confirm-ganti="showConfirmGanti = true"
+    <FavoriteSection v-if="activeTab === 'favorit'" :linked-user="linkedUser" :photo-error="photoError"
+      :show-scanner="showScanner" :active-menu-tab="activeMenuTab" :current-menu-items="currentMenuItems"
+      :selected-playlist="selectedPlaylist" :verify-error="verifyError" :scan-mode="scanMode" :manual-code="manualCode"
+      :verifying="verifying" :camera-error="cameraError" :video-ref="videoRef" @open-scanner="openScanner"
+      @close-scanner="closeScanner" @disconnect="disconnectTeacher" @show-confirm-ganti="showConfirmGanti = true"
       @update:active-menu-tab="activeMenuTab = $event" @update:scan-mode="scanMode = $event"
       @update:manual-code="manualCode = $event" @submit-manual="submitManual" @refresh-tab="refreshCurrentTab"
       @play-menu-item="playMenuItem" @click-detail-menu-item="handleClickDetailMenuItem"
       @play-playlist-item="playPlaylistItem" @click-detail-playlist-item="handleClickDetailPlaylistItem"
       @open-playlist-detail="openPlaylistDetail"
-      @back-from-playlist="selectedPlaylist = null; contentStore.detailPlaylistItems = []">
+      @back-from-playlist="selectedPlaylist = null; contentStore.detailPlaylistItems = []"
+      @set-photo-error="photoError = $event">
 
       <template #camera-video>
         <video ref="videoRef" class="w-full h-full object-cover" autoplay playsinline muted />

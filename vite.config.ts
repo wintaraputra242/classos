@@ -97,7 +97,17 @@ export default defineConfig({
       }
     }
   },
+  optimizeDeps: {
+    include: [
+      '@tensorflow/tfjs',
+      '@tensorflow-models/coco-ssd',
+    ],
+    exclude: [] // kosongkan exclude kalau sebelumnya ada TF di sini
+  },
   build: {
+    commonjsOptions: {
+      include: [/@tensorflow/, /node_modules/]
+    },
     rollupOptions: {
       output: {
         entryFileNames: 'assets/[name].[hash].js',

@@ -58,14 +58,14 @@ onUnmounted(() => {
 
 <template>
   <!-- Popup versi baru -->
-  <Transition name="fade">
+  <!-- <Transition name="fade">
     <div v-if="hasNewVersion"
       class="fixed inset-0 z-[99998] flex items-center justify-center p-4 bg-black/40 backdrop-blur-sm">
 
       <div
         class="w-full max-w-sm rounded-2xl shadow-2xl overflow-hidden dark:bg-zinc-900 bg-white border dark:border-zinc-700 border-gray-200">
 
-        <!-- Animated gradient header -->
+        Animated gradient header
         <div
           class="relative h-28 flex flex-col items-center justify-center bg-gradient-to-br from-brand-red to-pink-500 dark:from-brand-green dark:to-emerald-400 overflow-hidden">
           <div class="absolute w-24 h-24 rounded-full bg-white/10 -top-6 -left-6 animate-ping"
@@ -79,11 +79,11 @@ onUnmounted(() => {
           <p class="text-white text-xs font-bold tracking-widest uppercase opacity-80">Update Tersedia</p>
         </div>
 
-        <!-- Content -->
+        Content
         <div class="p-5 text-center">
           <h3 class="text-base font-black dark:text-white text-gray-900 mb-1">Versi Terbaru Telah Dirilis!</h3>
 
-          <!-- Versi & tanggal rilis -->
+          Versi & tanggal rilis
           <div class="flex items-center justify-center gap-2 mb-3">
             <span v-if="newVersion"
               class="flex items-center gap-1 text-xs font-bold dark:bg-zinc-800 bg-gray-100 dark:text-brand-green text-brand-red px-3 py-1 rounded-full">
@@ -112,7 +112,7 @@ onUnmounted(() => {
         </div>
       </div>
     </div>
-  </Transition>
+  </Transition> -->
 
   <Transition name="fade">
     <div v-if="!isOnline"
@@ -173,17 +173,17 @@ onUnmounted(() => {
   </Transition>
 
   <!-- API Error Toast -->
-  <div class="fixed top-4 right-4 z-[99997] flex flex-col gap-2 max-w-sm w-full pointer-events-none">
+  <!-- <div class="fixed top-4 right-4 z-[99997] flex flex-col gap-2 max-w-sm w-full pointer-events-none">
     <TransitionGroup name="toast">
       <div v-for="error in errors" :key="error.id"
         class="relative pointer-events-auto flex items-center gap-3 px-4 py-3.5 rounded-2xl shadow-xl border dark:bg-zinc-900 bg-white dark:border-zinc-700 border-gray-200 overflow-hidden">
 
-        <!-- Icon -->
+        Icon
         <div class="w-9 h-9 rounded-full bg-red-100 dark:bg-red-950/40 flex items-center justify-center flex-shrink-0">
           <i class="ri-signal-wifi-error-line text-base text-red-500" />
         </div>
 
-        <!-- Text -->
+        Text
         <div class="flex-1 min-w-0">
           <p class="text-xs font-bold dark:text-white text-gray-900 mb-0.5">
             Koneksi Bermasalah
@@ -193,7 +193,7 @@ onUnmounted(() => {
           </p>
         </div>
 
-        <!-- Actions -->
+        Actions
         <div class="flex items-center gap-1.5 flex-shrink-0">
           <button @click="errorReload"
             class="flex items-center gap-1 px-2.5 py-1.5 rounded-lg bg-brand-red dark:bg-brand-green text-white text-[10px] font-bold hover:opacity-80 transition-opacity">
@@ -206,14 +206,14 @@ onUnmounted(() => {
           </button>
         </div>
 
-        <!-- Progress bar -->
+        Progress bar
         <div class="absolute bottom-0 left-0 right-0 h-0.5 overflow-hidden">
           <div class="h-full bg-brand-red dark:bg-brand-green" style="animation: shrink 8s linear forwards" />
         </div>
 
       </div>
     </TransitionGroup>
-  </div>
+  </div> -->
 
   <RouterView />
 </template>

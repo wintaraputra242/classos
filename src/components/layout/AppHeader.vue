@@ -261,7 +261,7 @@ onUnmounted(() => document.removeEventListener('click', handleOutsideClick))
       </button>
 
       <!-- Fullscreen -->
-      <button @click="fsToggle()"
+      <!-- <button @click="fsToggle()"
         class="w-9 h-9 rounded-full dark:bg-gray-800 bg-gray-100 flex items-center justify-center hover:scale-110 transition-transform"
         title="Layar penuh (F11)">
         <svg v-if="!isFull" class="w-4 h-4 dark:text-gray-300 text-gray-600" fill="none" stroke="currentColor"
@@ -274,7 +274,7 @@ onUnmounted(() => document.removeEventListener('click', handleOutsideClick))
           <path stroke-linecap="round" stroke-linejoin="round"
             d="M8 3v3a2 2 0 01-2 2H3m18 0h-3a2 2 0 01-2-2V3m0 18v-3a2 2 0 012-2h3M3 16h3a2 2 0 012 2v3" />
         </svg>
-      </button>
+      </button> -->
 
       <!-- <InstallPwaButton /> -->
 
@@ -302,43 +302,32 @@ onUnmounted(() => document.removeEventListener('click', handleOutsideClick))
 
         <!-- User dropdown -->
         <div v-if="showUserMenu"
-          class="absolute top-14 right-4 dark:bg-[#1e1e1e] bg-white border dark:border-gray-700 border-gray-200 rounded-xl shadow-xl p-3 z-50 min-w-[180px]">
-          <!-- <p class="text-xs font-bold dark:text-white text-gray-900">{{ authStore.token?.teacherName }}</p>
-          <p class="text-[10px] dark:text-gray-400 text-gray-500 mb-3">{{ authStore.token?.schoolName }}</p>
-          <div class="pill inline-block mb-3" :class="{
-            'bg-yellow-500 text-white': authStore.jenjang === 'SD',
-            'bg-blue-500 text-white': authStore.jenjang === 'SMP',
-            'bg-purple-600 text-white': authStore.jenjang === 'SMA',
-            'bg-red-500 text-white': authStore.jenjang === 'SMK',
-          }">{{ authStore.jenjang }}</div>
-          <button @click="logout" class="w-full text-xs font-bold text-red-400 hover:text-red-300 text-left py-1">
-            Keluar
-          </button> -->
-          <p class="text-xs font-bold dark:text-white text-gray-900">{{ authStore.token?.schoolName ?? schoolName }}
-          </p>
+          class="absolute top-14 right-4 rounded-xl p-3 z-50 min-w-[180px] border border-zinc-600"
+          style="background-color: #2d2d2d; box-shadow: 0 8px 32px rgba(0,0,0,0.4);">
+
+          <p class="text-xs font-bold dark:text-white text-gray-900">{{ authStore.token?.schoolName ?? schoolName }}</p>
+
           <div v-if="authStore.isTrial"
             class="mt-2 inline-flex items-center gap-1 px-2 py-1 rounded-full bg-blue-100 dark:bg-blue-900/30 text-blue-700 dark:text-blue-300 text-[10px] font-bold">
-            <i class="ri-time-line"></i>
+            <i class="ri-time-line" />
             Akun Trial
           </div>
 
           <p v-if="authStore.isTrial" class="text-[10px] text-gray-500 dark:text-gray-400 mt-1">
             Akses menggunakan lisensi percobaan.
           </p>
-          <hr class="my-3 mt-4 border border-gray-300 dark:border-gray-800">
-          <!-- <div class="pill inline-block mb-3" :class="{
-            'bg-yellow-500 text-white': authStore.jenjang === 'SD',
-            'bg-blue-500 text-white': authStore.jenjang === 'SMP',
-            'bg-purple-600 text-white': authStore.jenjang === 'SMA',
-            'bg-red-500 text-white': authStore.jenjang === 'SMK',
-          }">{{ authStore.jenjang }}</div> -->
-          <button @click="logout" class="w-full text-xs font-bold text-red-400 hover:text-red-300 text-left py-1">
+
+          <hr class="my-3 mt-4 border-gray-200 dark:border-gray-700">
+
+          <button @click="logout"
+            class="w-full text-xs font-bold text-red-400 hover:text-red-300 text-left py-1 flex items-center gap-1.5">
+            <i class="ri-logout-box-r-line text-sm" />
             Keluar
           </button>
 
-          <hr class="my-2 mt-3 border border-gray-300 dark:border-gray-800">
+          <hr class="my-2 mt-3 border-gray-200 dark:border-gray-700">
 
-          <div class="text-center mt-1 text-[10px]">
+          <div class="text-center mt-1 text-[10px] dark:text-gray-500 text-gray-400">
             Versi {{ pkg.version }}
           </div>
         </div>

@@ -5,7 +5,7 @@ import { checkVersion } from '@/composables/useVersionCheck'
 
 const REQUIRED_KEYS = [
   // 'sn_site_name',
-  'sn_trial',
+  // 'sn_trial',
   'sn_expired_at',
   'sn_estimation_day',
   'sn_token',

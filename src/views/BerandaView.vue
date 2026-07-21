@@ -24,6 +24,8 @@ import HeroSlider from '@/components/beranda/HeroSlider.vue'
 import EducationSongSection from '@/components/beranda/EducationSongSection.vue'
 import StikerNewsRecommended from '@/components/beranda/StikerNewsRecommended.vue'
 import TeacherModeSection from '@/components/beranda/TeacherModeSection.vue'
+// import * as cocoSsd from '@tensorflow-models/coco-ssd'
+// import '@tensorflow/tfjs'
 
 const router = useRouter()
 const themeStore = useThemeStore()
@@ -374,16 +376,26 @@ async function startCamera() {
   cameraError.value = ''
 
   const constraints = [
-    { video: { width: { ideal: 1920 }, height: { ideal: 1080 } } },
-    { video: { width: { ideal: 1280 }, height: { ideal: 720 } } },
-    { video: { width: { min: 640 }, height: { min: 480 } } },
+    // ← 720p sudah cukup untuk QR scan, tidak perlu 1080p
+    { video: { width: { ideal: 1280 }, height: { ideal: 720 }, facingMode: 'environment' } },
+    { video: { width: { ideal: 640 }, height: { ideal: 480 }, facingMode: 'environment' } },
+    { video: { facingMode: 'environment' } },
     { video: true },
   ]
 
   for (const constraint of constraints) {
     try {
       cameraStream = await navigator.mediaDevices.getUserMedia(constraint)
-      if (videoRef.value) videoRef.value.srcObject = cameraStream
+
+      if (videoRef.value) {
+        videoRef.value.srcObject = cameraStream
+        await new Promise<void>((resolve) => {
+          videoRef.value!.onloadedmetadata = () => {
+            videoRef.value!.play().then(() => resolve()).catch(() => resolve())
+          }
+        })
+        await new Promise(r => setTimeout(r, 300)) // ← turunkan dari 500ms ke 300ms
+      }
 
       const settings = cameraStream.getVideoTracks()[0]?.getSettings()
       console.log('[qr-camera] resolusi:', settings?.width, 'x', settings?.height)
@@ -398,38 +410,74 @@ async function startCamera() {
   cameraError.value = 'Kamera tidak dapat diakses. Gunakan kode manual.'
 }
 
-
 function stopCamera() {
   cameraStream?.getTracks().forEach(t => t.stop())
   cameraStream = null
   if (qrInterval) { clearInterval(qrInterval); qrInterval = null }
+
+  // Terminate worker saat scanner ditutup
+  if (_qrWorker) {
+    _qrWorker.terminate()
+    _qrWorker = null
+    _workerBusy = false
+  }
 }
+
+let _qrWorker: Worker | null = null
+let _workerBusy = false
 
 function startQrScan() {
+  if (qrInterval) { clearInterval(qrInterval); qrInterval = null }
+
+  // Init worker
+  if (!_qrWorker) {
+    _qrWorker = new Worker('/qr-worker.js')
+    _qrWorker.onmessage = (e) => {
+      _workerBusy = false
+      const result = e.data.result
+      if (!result) return
+
+      const now = Date.now()
+      if (result === _lastQrResult && now - _lastQrTime < 3000) return
+
+      _lastQrResult = result
+      _lastQrTime = now
+
+      clearInterval(qrInterval!)
+      qrInterval = null
+      verifyCode(result)
+    }
+  }
+
   const canvas = document.createElement('canvas')
-  const context = canvas.getContext('2d')!
+  const context = canvas.getContext('2d', { willReadFrequently: true })!
 
+  // Interval lebih lambat — worker yang kerja keras, bukan main thread
   qrInterval = setInterval(() => {
-    if (!videoRef.value || videoRef.value.readyState < 2) return
-
     const video = videoRef.value
-    canvas.width = video.videoWidth
-    canvas.height = video.videoHeight
+    if (!video || video.readyState < 2 || video.videoWidth === 0) return
+    if (_workerBusy) return // skip kalau worker masih proses frame sebelumnya
+
+    // Downscale ke 400px — cukup untuk jsQR, lebih ringan
+    const maxW = 400
+    const scale = Math.min(1, maxW / video.videoWidth)
+    canvas.width = Math.floor(video.videoWidth * scale)
+    canvas.height = Math.floor(video.videoHeight * scale)
 
     context.drawImage(video, 0, 0, canvas.width, canvas.height)
-
     const imageData = context.getImageData(0, 0, canvas.width, canvas.height)
-    const code = jsQR(imageData.data, imageData.width, imageData.height, {
-      inversionAttempts: 'dontInvert',
-    })
 
-    if (code?.data) {
-      clearInterval(qrInterval!)
-      verifyCode(code.data)
-    }
-  }, 300)
+    _workerBusy = true
+    // Transfer buffer ke worker — zero-copy, tidak berat
+    _qrWorker!.postMessage(
+      { data: imageData.data, width: canvas.width, height: canvas.height },
+      [imageData.data.buffer]
+    )
+  }, 250) // interval lebih santai karena worker async
 }
 
+let _lastQrResult = ''
+let _lastQrTime = 0
 
 async function submitManual() {
   if ((manualCode.value?.length ?? 0) < 6 || verifying.value) return
@@ -479,6 +527,7 @@ async function verifyCode(code: string) {
       localStorage.setItem('sn_linked_user', JSON.stringify(linkedUser.value))
       closeScanner()
       await contentStore.loadFavoriteContent(data.user_id)
+
       await speakWithChime(
         `Selamat datang ${namaGuru}.. Semangat mengajar hari ini!`,
         '/sounds/login-chime.mp3'
@@ -565,6 +614,8 @@ function speak(text: string) {
   utt.volume = 0.8
   window.speechSynthesis.cancel()
   window.speechSynthesis.speak(utt)
+
+
 }
 
 // End class - kamera
@@ -596,18 +647,15 @@ async function openEndClass() {
 
   await nextTick()
 
+  loadCocoModel().catch(e => console.warn('[coco-ssd] load gagal:', e))
+
   try {
-    // ✅ Minta resolusi tinggi dulu, fallback ke resolusi lebih rendah kalau tidak support
     let stream: MediaStream | null = null
 
     const constraints = [
-      // Ideal: Full HD
-      { video: { width: { ideal: 1920 }, height: { ideal: 1080 }, facingMode: 'user' } },
-      // Fallback: HD
-      { video: { width: { ideal: 1280 }, height: { ideal: 720 }, facingMode: 'user' } },
-      // Fallback: minimal
-      { video: { width: { min: 640 }, height: { min: 480 }, facingMode: 'user' } },
-      // Last resort: apapun yang tersedia
+      { video: { width: { ideal: 1920 }, height: { ideal: 1080 }, facingMode: 'environment' } },
+      { video: { width: { ideal: 1280 }, height: { ideal: 720 }, facingMode: 'environment' } },
+      { video: { width: { min: 640 }, height: { min: 480 }, facingMode: 'environment' } },
       { video: true },
     ]
 
@@ -623,16 +671,13 @@ async function openEndClass() {
     if (!stream) throw new Error('Tidak ada kamera yang tersedia')
     _stream = stream
 
-    // Log resolusi yang berhasil didapat (untuk debug)
     const track = stream.getVideoTracks()[0]
-    const settings = track.getSettings()
-    console.log('[camera] resolusi:', settings.width, 'x', settings.height)
+    const settings = track?.getSettings()
+    console.log('[camera] resolusi:', settings?.width, 'x', settings?.height)
 
     const videoEl = endClassModalRef.value?.videoEndClassRef
     if (videoEl) {
       videoEl.srcObject = stream
-
-      // ✅ Tunggu video benar-benar siap dan resolusi ter-apply
       await new Promise<void>((resolve) => {
         videoEl.onloadedmetadata = () => {
           videoEl.play().then(() => resolve()).catch(() => resolve())
@@ -641,109 +686,137 @@ async function openEndClass() {
     }
 
     await new Promise(r => setTimeout(r, 300))
-    // startLiveDetection()
+    startLiveDetection() // ← aktifkan
   } catch (err) {
     console.error('Kamera tidak bisa diakses', err)
   }
 }
 
-// async function startLiveDetection() {
-//   isDetecting.value = true
+let _cocoModel: any | null = null
+let _detectInterval: ReturnType<typeof setInterval> | null = null
+const isDetecting = ref(false)
 
-//   try {
-//     await faceapi.nets.tinyFaceDetector.loadFromUri('/models')
-//   } catch {
-//     console.warn('Face API model gagal dimuat')
-//     isDetecting.value = false
-//     return
-//   }
+let _tfScriptLoaded = false
 
-//   isDetecting.value = false
+async function loadCocoScripts(): Promise<void> {
+  if (_tfScriptLoaded) return
 
-//   _detectInterval = setInterval(async () => {
-//     const video = endClassModalRef.value?.videoEndClassRef
-//     const canvas = endClassModalRef.value?.overlayCanvasRef
-//     if (!video || !canvas || capturedPhoto.value) return
+  await new Promise<void>((resolve, reject) => {
+    const tfScript = document.createElement('script')
+    tfScript.src = 'https://cdn.jsdelivr.net/npm/@tensorflow/tfjs@4.22.0/dist/tf.min.js'
+    tfScript.onload = () => {
+      const cocoScript = document.createElement('script')
+      cocoScript.src = 'https://cdn.jsdelivr.net/npm/@tensorflow-models/coco-ssd@2.2.3/dist/coco-ssd.min.js'
+      cocoScript.onload = () => {
+        _tfScriptLoaded = true
+        resolve()
+      }
+      cocoScript.onerror = reject
+      document.head.appendChild(cocoScript)
+    }
+    tfScript.onerror = reject
+    document.head.appendChild(tfScript)
+  })
+}
 
-//     try {
-//       const detections = await faceapi.detectAllFaces(video, new faceapi.TinyFaceDetectorOptions())
-//       faceCount.value = detections.length
+async function loadCocoModel() {
+  if (_cocoModel) return
 
-//       const displayWidth = video.clientWidth
-//       const displayHeight = video.clientHeight
-//       const videoWidth = video.videoWidth
-//       const videoHeight = video.videoHeight
+  isDetecting.value = true
+  try {
+    // Load script dulu kalau belum ada
+    await loadCocoScripts()
 
-//       canvas.width = displayWidth
-//       canvas.height = displayHeight
-//       canvas.style.width = displayWidth + 'px'
-//       canvas.style.height = displayHeight + 'px'
+    const tf = (window as any).tf
+    const cocoSsd = (window as any).cocoSsd
 
-//       // ✅ Hitung offset akibat object-cover (letterbox/pillarbox)
-//       const videoAspect = videoWidth / videoHeight
-//       const displayAspect = displayWidth / displayHeight
+    if (!tf || !cocoSsd) throw new Error('TensorFlow atau COCO-SSD belum dimuat')
 
-//       let scaleX: number, scaleY: number, offsetX: number, offsetY: number
+    _cocoModel = await cocoSsd.load({ base: 'lite_mobilenet_v2' })
+  } finally {
+    isDetecting.value = false
+  }
+}
 
-//       if (videoAspect > displayAspect) {
-//         // Video lebih lebar dari display → crop kiri kanan (pillarbox)
-//         scaleY = displayHeight / videoHeight
-//         scaleX = scaleY
-//         offsetX = (displayWidth - videoWidth * scaleX) / 2
-//         offsetY = 0
-//       } else {
-//         // Video lebih tinggi dari display → crop atas bawah (letterbox)
-//         scaleX = displayWidth / videoWidth
-//         scaleY = scaleX
-//         offsetX = 0
-//         offsetY = (displayHeight - videoHeight * scaleY) / 2
-//       }
+async function startLiveDetection() {
+  if (!_cocoModel) await loadCocoModel()
 
-//       const ctx = canvas.getContext('2d')
-//       if (!ctx) return
-//       ctx.clearRect(0, 0, canvas.width, canvas.height)
+  _detectInterval = setInterval(async () => {
+    const video = endClassModalRef.value?.videoEndClassRef
+    const canvas = endClassModalRef.value?.overlayCanvasRef
+    if (!video || !canvas || capturedPhoto.value) return
 
-//       detections.forEach(detection => {
-//         const { x, y, width, height } = detection.box
+    try {
+      // ✅ Turunkan threshold ke 0.25, naikkan maxDetections ke 50
+      const predictions = await _cocoModel!.detect(video, 50, 0.25)
+      const persons = predictions.filter((p: any) => p.class === 'person')
+      faceCount.value = persons.length
 
-//         // ✅ Terapkan scale + offset
-//         const sx = x * scaleX + offsetX
-//         const sy = y * scaleY + offsetY
-//         const sw = width * scaleX
-//         const sh = height * scaleY
+      const ctx = canvas.getContext('2d')
+      if (!ctx) return
 
-//         ctx.strokeStyle = '#22c55e'
-//         ctx.lineWidth = 2
-//         ctx.strokeRect(sx, sy, sw, sh)
+      canvas.width = video.clientWidth
+      canvas.height = video.clientHeight
+      ctx.clearRect(0, 0, canvas.width, canvas.height)
 
-//         const cornerLen = 12
-//         ctx.lineWidth = 3
+      // ✅ Hitung offset object-cover agar box pas
+      const videoAspect = video.videoWidth / video.videoHeight
+      const displayAspect = video.clientWidth / video.clientHeight
 
-//         ctx.beginPath(); ctx.moveTo(sx, sy + cornerLen); ctx.lineTo(sx, sy); ctx.lineTo(sx + cornerLen, sy); ctx.stroke()
-//         ctx.beginPath(); ctx.moveTo(sx + sw - cornerLen, sy); ctx.lineTo(sx + sw, sy); ctx.lineTo(sx + sw, sy + cornerLen); ctx.stroke()
-//         ctx.beginPath(); ctx.moveTo(sx, sy + sh - cornerLen); ctx.lineTo(sx, sy + sh); ctx.lineTo(sx + cornerLen, sy + sh); ctx.stroke()
-//         ctx.beginPath(); ctx.moveTo(sx + sw - cornerLen, sy + sh); ctx.lineTo(sx + sw, sy + sh); ctx.lineTo(sx + sw, sy + sh - cornerLen); ctx.stroke()
+      let scaleX: number, scaleY: number, offsetX: number, offsetY: number
 
-//         const score = Math.round(detection.score * 100)
-//         ctx.fillStyle = '#22c55e'
-//         ctx.fillRect(sx, sy - 18, 52, 18)
-//         ctx.fillStyle = '#ffffff'
-//         ctx.font = 'bold 11px sans-serif'
-//         ctx.fillText(`${score}%`, sx + 4, sy - 4)
-//       })
-//     } catch {
-//       // silent fail
-//     }
-//   }, 700)
-// }
+      if (videoAspect > displayAspect) {
+        scaleY = video.clientHeight / video.videoHeight
+        scaleX = scaleY
+        offsetX = (video.clientWidth - video.videoWidth * scaleX) / 2
+        offsetY = 0
+      } else {
+        scaleX = video.clientWidth / video.videoWidth
+        scaleY = scaleX
+        offsetX = 0
+        offsetY = (video.clientHeight - video.videoHeight * scaleY) / 2
+      }
 
-// function stopLiveDetection() {
-//   if (_detectInterval) {
-//     clearInterval(_detectInterval)
-//     _detectInterval = null
-//   }
-// }
+      persons.forEach((person: any, i: number) => {
+        const [x, y, w, h] = person.bbox
+        const sx = x * scaleX + offsetX
+        const sy = y * scaleY + offsetY
+        const sw = w * scaleX
+        const sh = h * scaleY
+        const score = Math.round(person.score * 100)
 
+        ctx.strokeStyle = '#22c55e'
+        ctx.lineWidth = 2
+        ctx.strokeRect(sx, sy, sw, sh)
+
+        const c = 14
+        ctx.lineWidth = 3
+        ctx.beginPath(); ctx.moveTo(sx, sy + c); ctx.lineTo(sx, sy); ctx.lineTo(sx + c, sy); ctx.stroke()
+        ctx.beginPath(); ctx.moveTo(sx + sw - c, sy); ctx.lineTo(sx + sw, sy); ctx.lineTo(sx + sw, sy + c); ctx.stroke()
+        ctx.beginPath(); ctx.moveTo(sx, sy + sh - c); ctx.lineTo(sx, sy + sh); ctx.lineTo(sx + c, sy + sh); ctx.stroke()
+        ctx.beginPath(); ctx.moveTo(sx + sw - c, sy + sh); ctx.lineTo(sx + sw, sy + sh); ctx.lineTo(sx + sw, sy + sh - c); ctx.stroke()
+
+        ctx.fillStyle = '#22c55e'
+        ctx.fillRect(sx, sy - 20, 72, 20)
+        ctx.fillStyle = '#fff'
+        ctx.font = 'bold 11px sans-serif'
+        ctx.fillText(`#${i + 1} ${score}%`, sx + 4, sy - 5)
+      })
+    } catch {
+      // silent fail
+    }
+  }, 500)
+}
+
+function stopLiveDetection() {
+  if (_detectInterval) { clearInterval(_detectInterval); _detectInterval = null }
+
+  const canvas = endClassModalRef.value?.overlayCanvasRef
+  if (canvas) {
+    const ctx = canvas.getContext('2d')
+    ctx?.clearRect(0, 0, canvas.width, canvas.height)
+  }
+}
 
 function playSound(src: string, volume = 0.7): void {
   const audio = new Audio(src)
@@ -752,6 +825,10 @@ function playSound(src: string, volume = 0.7): void {
 }
 
 function startCountdown() {
+  // ← Stop live detection saat countdown mulai
+  // faceCount yang terakhir terdeteksi akan dipakai sebagai hasil final
+  stopLiveDetection()
+
   countdown.value = 5
   playSound('/sounds/countdown-beep.mp3')
 
@@ -776,23 +853,17 @@ async function takePhoto() {
   const ctx = canvas.getContext('2d')
   canvas.width = video.videoWidth
   canvas.height = video.videoHeight
-
-  // ✅ Mirror canvas agar hasil foto sesuai tampilan kamera depan
-  ctx?.save()
-  ctx?.scale(-1, 1)
-  ctx?.drawImage(video, -canvas.width, 0, canvas.width, canvas.height)
-  ctx?.restore()
+  ctx?.drawImage(video, 0, 0, canvas.width, canvas.height)
 
   playSound('/sounds/camera-shutter.mp3', 0.8)
-
   showFlash.value = true
   setTimeout(() => showFlash.value = false, 300)
 
-  capturedPhoto.value = canvas.toDataURL('image/jpeg', 0.7)
+  capturedPhoto.value = canvas.toDataURL('image/jpeg', 0.92)
   _stream?.getTracks().forEach(t => t.stop())
   _stream = null
 
-  faceCount.value = 0
+  // ← faceCount tidak di-reset, pakai hasil deteksi terakhir sebelum countdown
   saveSessionState(localStorage.getItem(SESSION_ID_KEY) as string)
 }
 
@@ -804,13 +875,14 @@ function retakePhoto() {
   capturedPhoto.value = null
   faceCount.value = null
 
-  saveSessionState(localStorage.getItem(SESSION_ID_KEY) as string) // ✅ hapus foto lama dari storage juga
+  saveSessionState(localStorage.getItem(SESSION_ID_KEY) as string)
 
-  openEndClass() // akan nyalain kamera lagi karena capturedPhoto sudah null
+  openEndClass() // buka kamera lagi + startLiveDetection jalan lagi
 }
 
 function closeEndClass() {
   if (_countdownTimer) { clearInterval(_countdownTimer); _countdownTimer = null }
+  stopLiveDetection() // ← tambahkan
   stopNoteRecordingIfActive()
   showEndClassPopup.value = false
   countdown.value = 0
@@ -818,6 +890,7 @@ function closeEndClass() {
   _stream?.getTracks().forEach(t => t.stop())
   _stream = null
 }
+
 let _mediaStream: MediaStream | null = null
 
 const synth = window.speechSynthesis
@@ -1074,7 +1147,21 @@ async function restoreSessionState() {
 
     if (state.stepStatus) stepStatus.value = state.stepStatus
 
-    // ✅ Restore data laporan sesi
+    // ✅ Restore brief — pakai yang tersimpan, tidak perlu request ulang
+    if (state.brief?.text) {
+      classSession.brief.text = state.brief.text
+      classSession.brief.done = state.brief.done ?? false
+      classSession.brief.loading = false
+    }
+
+    // ✅ Restore summary
+    if (state.summarize?.text) {
+      classSession.summarize.text = state.summarize.text
+      classSession.summarize.done = state.summarize.done ?? false
+      classSession.summarize.loading = false
+    }
+
+    // Restore data laporan sesi
     listeningStartTime.value = state.listeningStartTime ?? null
     listeningStopTime.value = state.listeningStopTime ?? null
     capturedPhoto.value = state.capturedPhoto ?? null
@@ -1083,7 +1170,6 @@ async function restoreSessionState() {
     sessionScore.value = state.sessionScore ?? 0
     sessionScoreReason.value = state.sessionScoreReason ?? ''
 
-    // ✅ Kalau endclass sudah done, langsung tampilkan score final TANPA animasi ulang
     if (state.stepStatus?.endclass === 'done' && state.sessionScore !== undefined) {
       animatedScoreDisplay.value = state.sessionScore
       scoreAnimating.value = false
@@ -1110,29 +1196,22 @@ async function startSession() {
   stepStatus.value = { briefing: 'active', listening: 'locked', summary: 'locked', endclass: 'locked' }
 
   const sessionId = generateSessionId()
-  classSession.setSessionId(sessionId) // ← daftarkan session_id ke classSessionStore
-
-  saveSessionState(sessionId) // ← simpan saat mulai (tetap seperti semula)
-
-  // showBriefingPopup.value = true // buka popup, teks akan muncul berjalan seiring stream masuk
+  classSession.setSessionId(sessionId)
+  saveSessionState(sessionId)
 
   speak(`Sesi mengajar dimulai. Playlist ${selectedSessionPlaylist.value.name} telah dipilih. Silakan mulai dengan langkah pertama, Briefing.`)
 
-  // Request briefing ke AI (streaming) — briefingText di popup otomatis terisi berjalan
+  // ❌ Hapus guard ini — selalu request briefing untuk sesi baru
+  // if (classSession.brief.text) return
+
   await classSession.runBrief(
-    String(selectedSessionPlaylist.value.id),   // ⚠️ sesuaikan: field id playlist di object anda mungkin bukan `.id` (misal `.id_playlist`)
-    String(linkedUser.value?.userId)                         // ⚠️ sesuaikan: field/nama teacher id di authStore anda
+    String(selectedSessionPlaylist.value.id),
+    String(linkedUser.value?.userId)
   )
 
   if (classSession.brief.error) {
-    // Opsional: tampilkan toast/error state kalau brief gagal
     console.error('Gagal ambil briefing:', classSession.brief.error)
-    return
   }
-
-  // Setelah teks briefing lengkap diterima, baru mulai TTS bacakan
-  // (kalau anda mau TTS mulai baca SAAT teks masih streaming/belum lengkap, kasih tahu saya — beda pendekatan)
-  // startBriefingTTS()
 }
 
 const LISTENING_KEY = 'classos_listening'
@@ -1302,6 +1381,21 @@ function completeSummary() {
 // ── End class submit (ganti savePhoto lama) ─────────────────────────────
 const endClassNote = ref('')
 
+type ScoreTier = 'low' | 'mid' | 'high'
+
+const scoreTier = computed<ScoreTier>(() => {
+  if (sessionScore.value < 40) return 'low'
+  if (sessionScore.value <= 70) return 'mid'
+  return 'high'
+})
+
+// ⚠️ Ganti path ini nanti sesuai file audio yang anda siapkan
+const SCORE_SOUNDS: Record<ScoreTier, string> = {
+  low: '/sounds/score-low.mp3',
+  mid: '/sounds/score-mid.mp3',
+  high: '/sounds/score-high.mp3',
+}
+
 function startScoreAnimation() {
   scoreAnimating.value = true
   showScoreReason.value = false
@@ -1317,10 +1411,8 @@ function startScoreAnimation() {
     const progress = Math.min(elapsed / duration, 1)
 
     if (progress < 0.8) {
-      // Fase acak — angka melompat-lompat cepat (efek slot machine)
       animatedScoreDisplay.value = Math.floor(Math.random() * 100)
     } else {
-      // Fase settle — 20% waktu terakhir, pelan-pelan mendekat ke nilai asli
       const settleProgress = (progress - 0.8) / 0.2
       const noise = Math.floor((1 - settleProgress) * (Math.random() * 30))
       animatedScoreDisplay.value = Math.min(100, target + noise)
@@ -1331,7 +1423,11 @@ function startScoreAnimation() {
     } else {
       animatedScoreDisplay.value = target
       scoreAnimating.value = false
-      setTimeout(() => { showScoreReason.value = true }, 400) // alasan muncul sedikit setelah angka final
+
+      // ✅ Mainkan audio sesuai tier begitu angka final settle
+      playSound(SCORE_SOUNDS[scoreTier.value], 0.8)
+
+      setTimeout(() => { showScoreReason.value = true }, 400)
     }
   }
 
@@ -1510,19 +1606,32 @@ function resetSession() {
 
   if (listeningStatus.value) handleListeningClickWithTimer()
   listeningElapsed.value = 0
-  listeningStartTime.value = null   // ← pindah ke sini
-  listeningStopTime.value = null    // ← tambahan
+  listeningStartTime.value = null
+  listeningStopTime.value = null
   localStorage.removeItem(LISTENING_KEY)
   localStorage.removeItem(TRANSCRIPT_KEY)
   _transcriptLog = []
 
   stopTTS()
 
+  // ✅ Reset brief dan summary di classSession
+  classSession.resetSession()
+
+  // ✅ Hapus cache brief dan summarize agar sesi baru selalu request ulang
+  localStorage.removeItem('classos_brief_cache')
+  localStorage.removeItem('classos_summarize_cache')
+
   showBriefingPopup.value = false
   showListeningPopup.value = false
   showSummaryPopup.value = false
   showEndClassPopup.value = false
   capturedPhoto.value = null
+  faceCount.value = null
+  sessionScore.value = 0
+  sessionScoreReason.value = ''
+  animatedScoreDisplay.value = 0
+  scoreAnimating.value = false
+  showScoreReason.value = false
 
   if (_countdownTimer) {
     clearInterval(_countdownTimer)
@@ -1616,7 +1725,15 @@ const handleClickDetailPlaylist = (item: any) => {
   playerStore.setItemPlay(track, queueTracks)
 }
 
+// function retrySummary() {
+//   classSession.runSummarize(_transcriptLog.join(' ') || 'Tidak ada percakapan yang tercatat selama sesi listening.')
+// }
+
 function retrySummary() {
+  localStorage.removeItem('classos_summarize_cache')
+  classSession.summarize.text = ''
+  classSession.summarize.done = false
+
   classSession.runSummarize(_transcriptLog.join(' ') || 'Tidak ada percakapan yang tercatat selama sesi listening.')
 }
 
@@ -1695,9 +1812,42 @@ function disconnectTeacher() {
   playChime('/sounds/logout-teacher.mp3')
 }
 
+const showFaceConfirmPopup = ref(false)
+
+function requestConfirmDetection() {
+  stopLiveDetection() // freeze jumlah wajah & hapus box, sesuai perbaikan sebelumnya
+  showFaceConfirmPopup.value = true
+}
+
+function confirmDetectionYes() {
+  showFaceConfirmPopup.value = false
+  startCountdown()
+}
+
+function confirmDetectionNo() {
+  showFaceConfirmPopup.value = false
+  startLiveDetection() // lanjutkan deteksi lagi
+}
+
+async function retryBriefing() {
+  // Hapus cache lama agar tidak pakai yang terpotong
+  localStorage.removeItem('classos_brief_cache')
+  classSession.brief.text = ''
+  classSession.brief.done = false
+
+  await classSession.runBrief(
+    String(selectedSessionPlaylist.value?.id),
+    String(linkedUser.value?.userId)
+  )
+}
+
 onMounted(() => {
   resetHeroTimer()
-  if (linkedUser.value) loadFavorites()
+  if (linkedUser.value) {
+    loadFavorites()
+    // Pre-load model kalau guru sudah login sebelumnya
+    // loadCocoModel().catch(e => console.warn('[coco-ssd] preload gagal:', e))
+  }
 
   // ✅ Daftarkan callback navigasi ke store
   playerStore.setNavigationCallback((path, query) => {
@@ -1741,10 +1891,9 @@ onUnmounted(() => {
   clearInterval(heroTimer)
   stopCamera()
   closeEndClass()
+  stopLiveDetection() // ← tambahkan
   _mediaStream?.getTracks().forEach(t => t.stop())
   synth.cancel()
-
-  // ✅ Bersihkan callback saat unmount
   playerStore.setNavigationCallback(null as any)
   playerStore.clearQueuePageMeta()
 })
@@ -1821,8 +1970,8 @@ onUnmounted(() => {
 
     <BriefingModal v-model="showBriefingPopup" :briefing-text="briefingText" :loading="classSession.brief.loading"
       :error="classSession.brief.error" :is-speaking="isSpeaking" :is-paused="isPaused" :speaking-step="speakingStep"
-      @close="closeBriefing" @restart-tts="restartBriefingTTS" @toggle-tts="startBriefingTTS"
-      @complete="completeBriefing" @retry="startSession" />
+      :briefing-done="classSession.brief.done" @close="closeBriefing" @restart-tts="restartBriefingTTS"
+      @toggle-tts="startBriefingTTS" @complete="completeBriefing" @retry="retryBriefing" />
 
     <ListeningModal v-model="showListeningPopup" :listening-elapsed="listeningElapsed"
       :listening-status="listeningStatus" :step-status="stepStatus.listening"
@@ -1831,15 +1980,17 @@ onUnmounted(() => {
 
     <SummaryModal v-model="showSummaryPopup" :summary-text="summaryText" :loading="classSession.summarize.loading"
       :error="classSession.summarize.error" :is-speaking="isSpeaking" :is-paused="isPaused"
-      :speaking-step="speakingStep" @close="closeSummary" @restart-tts="restartSummaryTTS" @toggle-tts="startSummaryTTS"
-      @complete="completeSummary" @retry="retrySummary" />
+      :speaking-step="speakingStep" :summary-done="classSession.brief.done" @close="closeSummary"
+      @restart-tts="restartSummaryTTS" @toggle-tts="startSummaryTTS" @complete="completeSummary"
+      @retry="retrySummary" />
 
     <EndClassModal ref="endClassModalRef" v-model="showEndClassPopup" :captured-photo="capturedPhoto"
-      :face-count="faceCount" :countdown="countdown" :show-flash="showFlash" :end-class-note="endClassNote"
-      :is-recording-note="isRecordingNote" :submitting-end-class="submittingEndClass"
-      @update:end-class-note="endClassNote = $event" @close="closeEndClass" @toggle-note-recording="toggleNoteRecording"
-      @start-countdown="startCountdown" @retake="retakePhoto" @submit="submitEndClass"
-      @update:face-count="faceCount = $event" />
+      :is-detecting="isDetecting" :face-count="faceCount" :countdown="countdown" :show-flash="showFlash"
+      :end-class-note="endClassNote" :is-recording-note="isRecordingNote" :submitting-end-class="submittingEndClass"
+      :show-face-confirm="showFaceConfirmPopup" @update:end-class-note="endClassNote = $event" @close="closeEndClass"
+      @toggle-note-recording="toggleNoteRecording" @request-confirm="requestConfirmDetection"
+      @confirm-yes="confirmDetectionYes" @confirm-no="confirmDetectionNo" @retake="retakePhoto"
+      @submit="submitEndClass" />
 
     <!-- Konfirmasi Ganti Akun -->
     <ConfirmChangeAccountModal v-model="showConfirmGanti" :linked-user-name="linkedUser?.name"
@@ -1853,7 +2004,7 @@ onUnmounted(() => {
       :listening-start-time="listeningStartTime" :listening-stop-time="listeningStopTime" :summary-text="summaryText"
       :end-class-note="endClassNote" :animated-score-display="animatedScoreDisplay"
       :session-score-reason="sessionScoreReason" :score-animating="scoreAnimating" :show-score-reason="showScoreReason"
-      @close="closeSessionReport" />
+      :scoreTier="scoreTier" @close="closeSessionReport" />
 
     <!-- Popup Detail -->
     <TrackDetailPopup v-model="showTrackPopup" />

@@ -1,6 +1,8 @@
 <!-- components/SummaryModal.vue -->
 <script setup lang="ts">
-defineProps<{
+import { ref, watch } from 'vue';
+
+const props = defineProps<{
   modelValue: boolean
   summaryText: string
   loading: boolean
@@ -8,6 +10,7 @@ defineProps<{
   isSpeaking: boolean
   isPaused: boolean
   speakingStep: string | null
+  summaryDone: boolean
 }>()
 
 const emit = defineEmits<{
@@ -18,6 +21,32 @@ const emit = defineEmits<{
   (e: 'complete'): void
   (e: 'retry'): void
 }>()
+
+const ttsLoading = ref(false)
+
+// Watch isSpeaking — kalau sudah speaking, matikan loading
+watch(() => props.isSpeaking, (val) => {
+  if (val) ttsLoading.value = false
+})
+
+function handleToggleTTS() {
+  if (!props.isSpeaking) {
+    ttsLoading.value = true
+    // Safety timeout kalau TTS tidak kunjung start
+    setTimeout(() => { ttsLoading.value = false }, 5000)
+  }
+  emit('toggle-tts')
+}
+
+function handleRestartTTS() {
+  // Kalau teks belum selesai/terpotong → re-request ke API
+  if (!props.summaryDone) {
+    emit('retry') // ← trigger runBrief ulang dari beranda
+    return
+  }
+  // Kalau teks sudah lengkap → cukup restart TTS saja
+  emit('restart-tts')
+}
 </script>
 
 <template>
@@ -44,28 +73,30 @@ const emit = defineEmits<{
           <div class="p-5">
 
             <!-- Animasi saat TTS playing -->
-            <div v-if="isSpeaking && !isPaused && speakingStep === 'summary'"
-              class="flex flex-col items-center py-4 mb-4">
-              <div class="relative w-16 h-16 flex items-center justify-center mb-3">
-                <div class="absolute inset-0 rounded-full bg-brand-red/10 dark:bg-brand-green/10 animate-ping" />
-                <div class="absolute inset-2 rounded-full bg-brand-red/15 dark:bg-brand-green/15 animate-ping"
-                  style="animation-delay:0.3s" />
-                <div
-                  class="relative w-10 h-10 rounded-full bg-brand-red/20 dark:bg-brand-green/20 border border-brand-red/40 dark:border-brand-green/40 flex items-center justify-center">
-                  <i class="ri-volume-up-fill text-brand-red dark:text-brand-green text-lg" />
+            <Transition name="speaking-fade">
+              <div v-if="isSpeaking && !isPaused && speakingStep === 'summary'"
+                class="flex flex-col items-center py-4 mb-4">
+                <div class="relative w-16 h-16 flex items-center justify-center mb-3">
+                  <div class="absolute inset-0 rounded-full bg-brand-red/10 dark:bg-brand-green/10 animate-ping" />
+                  <div class="absolute inset-2 rounded-full bg-brand-red/15 dark:bg-brand-green/15 animate-ping"
+                    style="animation-delay:0.3s" />
+                  <div
+                    class="relative w-10 h-10 rounded-full bg-brand-red/20 dark:bg-brand-green/20 border border-brand-red/40 dark:border-brand-green/40 flex items-center justify-center">
+                    <i class="ri-volume-up-fill text-brand-red dark:text-brand-green text-lg" />
+                  </div>
                 </div>
-              </div>
 
-              <div class="flex items-end gap-1 h-8 mb-3">
-                <div v-for="i in 7" :key="i" class="w-1.5 rounded-full bg-brand-red dark:bg-brand-green" :style="{
-                  height: `${[50, 80, 40, 100, 60, 85, 45][i - 1]}%`,
-                  animation: `soundBar 0.8s ease-in-out infinite alternate`,
-                  animationDelay: `${(i - 1) * 0.1}s`
-                }" />
-              </div>
+                <div class="flex items-end gap-1 h-8 mb-3">
+                  <div v-for="i in 7" :key="i" class="w-1.5 rounded-full bg-brand-red dark:bg-brand-green" :style="{
+                    height: `${[50, 80, 40, 100, 60, 85, 45][i - 1]}%`,
+                    animation: `soundBar 0.8s ease-in-out infinite alternate`,
+                    animationDelay: `${(i - 1) * 0.1}s`
+                  }" />
+                </div>
 
-              <p class="text-xs font-medium dark:text-brand-green text-brand-red">Sedang membacakan summary...</p>
-            </div>
+                <p class="text-xs font-medium dark:text-brand-green text-brand-red">Sedang membacakan summary...</p>
+              </div>
+            </Transition>
 
             <!-- Loading state -->
             <div v-if="loading && !summaryText" class="py-2">
@@ -114,15 +145,17 @@ const emit = defineEmits<{
 
           <!-- Actions -->
           <div class="px-5 pb-5 flex gap-2">
-            <button @click="emit('restart-tts')"
+            <button @click="handleRestartTTS"
               class="w-10 h-10 flex-shrink-0 flex items-center justify-center rounded-xl text-xs font-bold dark:bg-zinc-800 bg-gray-100 dark:text-gray-300 text-gray-600 hover:opacity-80 transition-opacity">
               <i class="ri-restart-line text-base" />
             </button>
 
-            <button @click="emit('toggle-tts')"
-              class="flex-1 py-2.5 rounded-xl text-xs font-bold dark:bg-zinc-800 bg-gray-100 dark:text-gray-300 text-gray-600 hover:opacity-80 transition-opacity flex items-center justify-center gap-1.5">
-              <i :class="isSpeaking && speakingStep === 'summary' ? 'ri-stop-fill' : 'ri-volume-up-line'" />
-              {{ isSpeaking && speakingStep === 'summary' ? 'Hentikan Suara' : 'Dengarkan Summary' }}
+            <button @click="handleToggleTTS" :disabled="ttsLoading"
+              class="flex-1 py-2.5 rounded-xl text-xs font-bold dark:bg-zinc-800 bg-gray-100 dark:text-gray-300 text-gray-600 hover:opacity-80 transition-opacity flex items-center justify-center gap-1.5 disabled:opacity-60 disabled:cursor-not-allowed">
+              <i v-if="ttsLoading" class="ri-loader-4-line animate-spin" />
+              <i v-else :class="isSpeaking && speakingStep === 'summary' ? 'ri-stop-fill' : 'ri-volume-up-line'" />
+              {{ ttsLoading ? 'Memuat suara...' : isSpeaking && speakingStep === 'summary' ? 'Hentikan Suara' :
+                'Dengarkan Summary' }}
             </button>
 
             <button @click="emit('complete')"
@@ -136,3 +169,23 @@ const emit = defineEmits<{
     </Transition>
   </Teleport>
 </template>
+
+<style scoped>
+.speaking-fade-enter-active {
+  transition: all 0.4s cubic-bezier(0.34, 1.56, 0.64, 1);
+}
+
+.speaking-fade-leave-active {
+  transition: all 0.2s ease;
+}
+
+.speaking-fade-enter-from {
+  opacity: 0;
+  transform: translateY(-8px) scale(0.95);
+}
+
+.speaking-fade-leave-to {
+  opacity: 0;
+  transform: translateY(-8px) scale(0.95);
+}
+</style>

@@ -11,7 +11,8 @@ const props = defineProps<{
   endClassNote: string
   isRecordingNote: boolean
   submittingEndClass: boolean
-  // isDetecting: boolean
+  isDetecting: boolean
+  showFaceConfirm: boolean
 }>()
 
 const emit = defineEmits<{
@@ -20,7 +21,9 @@ const emit = defineEmits<{
   (e: 'update:endClassNote', value: string): void
   (e: 'close'): void
   (e: 'toggle-note-recording'): void
-  (e: 'start-countdown'): void
+  (e: 'request-confirm'): void // ✅ ganti dari 'start-countdown'
+  (e: 'confirm-yes'): void // ✅ tambahan
+  (e: 'confirm-no'): void // ✅ tambahan
   (e: 'retake'): void
   (e: 'submit'): void
 }>()
@@ -77,7 +80,7 @@ defineExpose({ videoEndClassRef, canvasRef, overlayCanvasRef })
             <!-- Kamera / Hasil Foto -->
             <div class="relative bg-black aspect-video">
               <video v-if="!capturedPhoto" ref="videoEndClassRef" autoplay playsinline muted
-                class="w-full h-full object-cover" style="transform: scaleX(-1);" />
+                class="w-full h-full object-cover" />
               <!-- <video v-if="!capturedPhoto" ref="videoEndClassRef" autoplay playsinline
                 class="w-full h-full object-cover" /> -->
               <img v-else :src="capturedPhoto" class="w-full h-full object-cover" />
@@ -96,17 +99,17 @@ defineExpose({ videoEndClassRef, canvasRef, overlayCanvasRef })
               </Transition>
 
               <div v-if="!capturedPhoto" class="absolute bottom-2 left-2 right-2 flex items-center justify-between">
-                <!-- <div v-if="isDetecting" class="flex items-center gap-1.5 bg-black/60 px-3 py-1.5 rounded-full">
-                  <i class="ri-loader-4-line animate-spin text-white text-xs" />
-                  <span class="text-white text-[10px] font-bold">Memuat detektor...</span>
-                </div> -->
-
-                <!-- <div v-else class="flex items-center gap-1.5 bg-black/60 px-3 py-1.5 rounded-full">
-                  <i class="ri-group-line text-white text-xs" />
-                  <span class="text-white text-[10px] font-bold">
-                    {{ faceCount === null ? 'Mendeteksi...' : `${faceCount} wajah terdeteksi` }}
+                <div class="flex items-center gap-2.5 bg-black/70 px-5 py-3 rounded-full">
+                  <i v-if="isDetecting" class="ri-loader-4-line animate-spin text-white text-xl" />
+                  <i v-else class="ri-group-line text-white text-xl" />
+                  <span class="text-white text-sm font-bold">
+                    {{ isDetecting
+                      ? 'Memuat detektor...'
+                      : faceCount === null
+                        ? 'Mendeteksi...'
+                        : `${faceCount} orang terdeteksi` }}
                   </span>
-                </div> -->
+                </div>
 
                 <div class="flex items-center gap-1.5 bg-black/60 px-3 py-1.5 rounded-full">
                   <span class="w-1.5 h-1.5 rounded-full bg-red-500 animate-pulse" />
@@ -206,7 +209,7 @@ defineExpose({ videoEndClassRef, canvasRef, overlayCanvasRef })
                 class="flex-1 py-2.5 rounded-xl text-xs font-bold dark:bg-zinc-800 bg-gray-100 dark:text-gray-300 text-gray-600 hover:opacity-80 transition-opacity">
                 Batal
               </button>
-              <button @click="emit('start-countdown')" :disabled="countdown > 0"
+              <button @click="emit('request-confirm')" :disabled="isDetecting || countdown > 0"
                 class="flex-1 py-2.5 rounded-xl text-xs font-bold bg-brand-red dark:bg-brand-green text-white flex items-center justify-center gap-1.5 disabled:opacity-40 disabled:cursor-not-allowed hover:opacity-90 transition-opacity">
                 <i class="ri-camera-fill" />
                 {{ countdown > 0 ? `Bersiap... ${countdown}` : 'Ambil Foto Sekarang' }}
@@ -227,6 +230,37 @@ defineExpose({ videoEndClassRef, canvasRef, overlayCanvasRef })
           </div>
 
         </div>
+
+        <!-- Popup konfirmasi jumlah wajah -->
+        <Transition name="fade">
+          <div v-if="showFaceConfirm" class="fixed inset-0 z-[10000] flex items-center justify-center p-4">
+            <div class="absolute inset-0 bg-black/70" />
+            <div
+              class="relative w-full max-w-sm dark:bg-zinc-900 bg-white rounded-2xl shadow-2xl overflow-hidden p-6 text-center">
+              <div class="w-14 h-14 rounded-full bg-brand-green/15 flex items-center justify-center mx-auto mb-4">
+                <i class="ri-group-line text-2xl text-brand-green" />
+              </div>
+
+              <p class="text-sm dark:text-gray-300 text-gray-600 mb-1">Terdeteksi</p>
+              <p class="text-4xl font-black dark:text-white text-gray-900 mb-1">
+                {{ faceCount ?? 0 }} <span class="text-base font-normal dark:text-gray-400 text-gray-500">siswa</span>
+              </p>
+              <p class="text-xs dark:text-gray-500 text-gray-400 mb-6">Apakah jumlah ini sudah sesuai?</p>
+
+              <div class="flex gap-2">
+                <button @click="emit('confirm-no')"
+                  class="flex-1 py-2.5 rounded-xl text-xs font-bold dark:bg-zinc-800 bg-gray-100 dark:text-gray-300 text-gray-600 hover:opacity-80 transition-opacity">
+                  Belum, Deteksi Ulang
+                </button>
+                <button @click="emit('confirm-yes')"
+                  class="flex-1 py-2.5 rounded-xl text-xs font-bold bg-brand-red dark:bg-brand-green text-white hover:opacity-90 transition-opacity flex items-center justify-center gap-1.5">
+                  <i class="ri-check-line" />
+                  Ya, Sudah Benar
+                </button>
+              </div>
+            </div>
+          </div>
+        </Transition>
       </div>
     </Transition>
   </Teleport>

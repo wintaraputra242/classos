@@ -552,7 +552,7 @@ export async function apiStopClass(data: {
 }) {
   return dashboardPost(`v1/stop-class`, {
     session_id: data.session_id,
-    student_countings: data.student_counting,
+    student_counting: data.student_counting,
     stop_class_image: data.stop_class_image,
   })
 }

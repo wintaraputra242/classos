@@ -44,6 +44,7 @@ const props = defineProps<{
   verifying: boolean
   cameraError?: string
   videoRef: any
+  photoError: boolean
 }>()
 
 const emit = defineEmits<{
@@ -62,6 +63,7 @@ const emit = defineEmits<{
   'clickDetailPlaylistItem': [item: LoncengItem]
   'openPlaylistDetail': [playlist: PlaylistItem]
   'backFromPlaylist': []
+  'set-photo-error': [value: boolean]
 }>()
 
 const playerStore = usePlayerStore()
@@ -93,11 +95,20 @@ function onConfirmDisconnect() {
     <!-- Profil linkedUser -->
     <div v-if="linkedUser"
       class="flex items-center gap-3 mb-4 dark:bg-[#1e1e1e] bg-white rounded-2xl p-4 border dark:border-gray-800 border-gray-100">
-      <img v-if="linkedUser.photo" :src="linkedUser.photo" :alt="linkedUser.name"
+      <!-- <img v-if="linkedUser.photo" :src="linkedUser.photo" :alt="linkedUser.name"
         class="w-12 h-12 rounded-full object-cover flex-shrink-0" loading="lazy" decoding="async" />
       <div v-else
         class="w-12 h-12 rounded-full bg-gradient-to-br from-red-400 to-pink-500 flex items-center justify-center text-base font-black text-white flex-shrink-0">
         {{ linkedUser.name?.charAt(0).toUpperCase() }}
+      </div> -->
+      <div
+        class="w-12 h-12 rounded-full bg-gradient-to-br from-red-400 to-pink-500 flex items-center justify-center text-sm font-black text-white flex-shrink-0 overflow-hidden">
+        <img v-if="linkedUser.photo && !photoError" :src="linkedUser.photo" alt="teacher photo"
+          class="w-full h-full object-cover" @error="emit('set-photo-error', true)"
+          @load="(e) => { if ((e.target as HTMLImageElement).naturalWidth === 0) emit('set-photo-error', true) }" />
+        <span v-if="!linkedUser.photo || photoError">
+          {{ linkedUser.name?.charAt(0).toUpperCase() }}
+        </span>
       </div>
       <div class="flex-1 min-w-0">
         <p class="font-bold dark:text-white text-gray-900 text-sm truncate">{{ linkedUser.name }}</p>

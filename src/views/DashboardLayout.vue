@@ -6,8 +6,10 @@ import AppHeader from '@/components/layout/AppHeader.vue'
 import AppRightSidebar from '@/components/layout/AppRightSidebar.vue'
 import BottomPlayer from '@/components/player/BottomPlayer.vue'
 import { useAuthStore } from '@/stores/auth'
+import { usePlayerStore } from '@/stores/player'
 
 const auth = useAuthStore()
+const playerStore = usePlayerStore()
 
 const showTrialModal = ref(true)
 const trialStep = ref(1)
@@ -118,6 +120,44 @@ watch(() => surveyForm.value.id_kabupaten_kota, (id) => {
 
 const isSubmitFormTrial = ref(localStorage.getItem('sn_trial_survey_done') === '1' ? true : false)
 
+const showPremiumBanner = ref(false)
+
+function handleShowPremium() {
+  if (playerStore.currentTrack && !showPremiumBanner.value) {
+    // Ada audio playing dan banner belum muncul → tampilkan banner dulu (player disembunyikan)
+    showPremiumBanner.value = true
+  } else if (showPremiumBanner.value) {
+    // Banner sedang tampil → tutup banner (player kembali muncul kalau ada audio)
+    showPremiumBanner.value = false
+  } else {
+    // Tidak ada audio → tampilkan banner
+    showPremiumBanner.value = true
+  }
+}
+
+// watch(() => playerStore.currentTrack, (track) => {
+//   if (track) showPremiumBanner.value = false
+// })
+
+const showPremiumModal = ref(false)
+const showSKPModal = ref(false)
+
+const copiedLink = ref(false)
+const copiedWA = ref(false)
+
+function copyToClipboard(text: string, type?: string) {
+  navigator.clipboard.writeText(text).then(() => {
+    if (type === 'wa') {
+      copiedWA.value = true
+      setTimeout(() => copiedWA.value = false, 2000)
+    } else {
+      copiedLink.value = true
+      setTimeout(() => copiedLink.value = false, 2000)
+    }
+  })
+}
+
+
 onMounted(() => {
   // Tampilkan modal jika: sudah login, token berstatus trial, belum pernah isi survei
   const surveyDone = localStorage.getItem('sn_trial_survey_done')
@@ -132,7 +172,7 @@ onMounted(() => {
 
 <template>
   <div class="flex h-screen overflow-hidden">
-    <AppSidebar />
+    <AppSidebar @show-premium="showPremiumModal = true" @show-skp="showSKPModal = true" />
     <div class="flex-1 flex flex-col overflow-hidden">
       <AppHeader />
       <div class="flex flex-1 overflow-hidden">
@@ -147,7 +187,89 @@ onMounted(() => {
       </div>
     </div>
   </div>
-  <BottomPlayer />
+  <BottomPlayer :show-premium-banner="showPremiumBanner" @close-premium="showPremiumBanner = false" />
+
+  <!-- Modal Premium -->
+  <Teleport to="body">
+    <Transition name="fade">
+      <div v-if="showPremiumModal" class="fixed inset-0 z-[9998] flex items-center justify-center p-4"
+        @click.self="showPremiumModal = false">
+        <div class="absolute inset-0 bg-black/60 backdrop-blur-sm" @click="showPremiumModal = false" />
+        <div class="relative w-full max-w-md rounded-2xl overflow-hidden shadow-2xl border border-yellow-500/30"
+          style="background: linear-gradient(135deg, #1a1a2e 0%, #16213e 40%, #0f3460 100%);">
+
+          <!-- Close -->
+          <button @click="showPremiumModal = false"
+            class="absolute top-4 right-4 z-10 w-8 h-8 flex items-center justify-center rounded-lg bg-white/10 hover:bg-white/20 transition-colors">
+            <i class="ri-close-line text-white text-base" />
+          </button>
+
+          <!-- Content -->
+          <div class="px-6 pt-7 pb-6">
+
+            <!-- Header -->
+            <div class="flex items-center gap-3 mb-4">
+              <span class="text-3xl">⭐</span>
+              <p class="text-base font-extrabold text-yellow-400 leading-tight">
+                TINGKATKAN KE<br>
+                <span class="text-white text-lg">CLASSOS PREMIUM</span>
+              </p>
+            </div>
+
+            <p class="text-sm text-gray-300 leading-relaxed mb-5">
+              Nikmati lebih banyak konten edukasi, fitur pembelajaran interaktif, dan dukungan untuk mewujudkan Kelas
+              Pintar di sekolah Anda.
+            </p>
+
+            <div class="h-px bg-white/10 mb-5" />
+
+            <!-- Website -->
+            <p class="text-xs text-gray-400 mb-2">Kunjungi Website:</p>
+            <a href="https://classos.isn-speed.com/join" target="_blank"
+              class="flex items-center gap-3 w-full py-4 px-4 rounded-xl mb-5 bg-white/10 hover:bg-white/15 transition-colors">
+              <i class="ri-global-line text-blue-400 text-xl flex-shrink-0" />
+              <span class="text-xl font-bold text-white">classos.isn-speed.com/join</span>
+            </a>
+
+            <div class="h-px bg-white/10 mb-5" />
+
+            <!-- WA -->
+            <p class="text-xs text-gray-400 mb-2">Informasi & Bantuan:</p>
+            <a :href="`https://wa.me/6282146633466?text=${encodeURIComponent('Halo, saya ingin informasi ClassOS Premium.')}`"
+              target="_blank"
+              class="flex items-center gap-3 w-full py-4 px-4 rounded-xl bg-green-600/20 hover:bg-green-600/30 transition-colors border border-green-600/30">
+              <i class="ri-whatsapp-line text-green-400 text-xl flex-shrink-0" />
+              <span class="text-xl font-bold text-green-400">0821 4663 3466</span>
+            </a>
+
+          </div>
+        </div>
+      </div>
+    </Transition>
+  </Teleport>
+
+  <!-- Modal SKP -->
+  <Teleport to="body">
+    <Transition name="fade">
+      <div v-if="showSKPModal" class="fixed inset-0 z-[9998] flex items-center justify-center p-4"
+        @click.self="showSKPModal = false">
+        <div class="absolute inset-0 bg-black/60 backdrop-blur-sm" @click="showSKPModal = false" />
+
+        <div class="relative w-full max-w-lg rounded-2xl overflow-hidden shadow-2xl">
+
+          <!-- Tombol Close -->
+          <button @click="showSKPModal = false"
+            class="absolute top-3 right-3 z-20 w-8 h-8 flex items-center justify-center rounded-full bg-black/50 hover:bg-black/70 transition-colors">
+            <i class="ri-close-line text-white text-sm" />
+          </button>
+
+          <!-- Gambar flyer -->
+          <img src="/images/skp-flyer.jpeg" alt="Solusi Kelas Pintar" class="w-full h-auto block" />
+
+        </div>
+      </div>
+    </Transition>
+  </Teleport>
 
   <!-- Modal Trial -->
   <Teleport to="body">

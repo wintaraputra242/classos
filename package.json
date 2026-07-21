@@ -1,6 +1,6 @@
 {
   "name": "stikernews-pelajar",
-  "version": "1.0.7",
+  "version": "1.0.12",
   "private": true,
   "type": "module",
   "scripts": {
@@ -15,6 +15,8 @@
     "format": "prettier --write --experimental-cli src/"
   },
   "dependencies": {
+    "@tensorflow-models/coco-ssd": "^2.2.3",
+    "@tensorflow/tfjs": "^4.22.0",
     "@vueuse/core": "^14.3.0",
     "face-api.js": "^0.22.2",
     "jsqr": "^1.4.0",
@@ -24,7 +26,7 @@
     "vue": "^3.5.32",
     "vue-router": "^5.0.4"
   },
-  "devDependencies": { 
+  "devDependencies": {
     "@tsconfig/node24": "^24.0.4",
     "@types/node": "^24.12.2",
     "@vitejs/plugin-vue": "^6.0.6",

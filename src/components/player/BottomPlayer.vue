@@ -3,6 +3,14 @@ import { computed, ref, nextTick } from 'vue'
 import { usePlayerStore } from '@/stores/player'
 import TrackDetailPopup from '../ui/TrackDetailPopup.vue';
 
+const props = defineProps<{
+  showPremiumBanner?: boolean
+}>()
+
+const emit = defineEmits<{
+  'close-premium': []
+}>()
+
 const playerStore = usePlayerStore()
 const currentTrack = computed(() => {
   console.log(playerStore.currentTrack);
@@ -116,7 +124,7 @@ function openPlayerDetail() {
 
 <template>
   <Transition name="player">
-    <div v-if="currentTrack"
+    <div v-if="currentTrack && !props.showPremiumBanner"
       class="dark:bg-[#181818]/95 bg-white/95 border-t dark:border-gray-800 border-gray-200 px-4 py-3 fixed bottom-0 w-full z-30">
       <div class="flex items-center justify-between max-w-screen-2xl mx-auto gap-3">
 
