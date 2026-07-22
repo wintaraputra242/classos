@@ -34,6 +34,12 @@ const router = createRouter({
       meta: { requiresAuth: false },
     },
     {
+      path: '/join',
+      name: 'join',
+      component: () => import('@/views/JoinView.vue'),
+      meta: { requiresAuth: false }
+    },
+    {
       path: '/',
       component: () => import('@/views/DashboardLayout.vue'),
       meta: { requiresAuth: true },
