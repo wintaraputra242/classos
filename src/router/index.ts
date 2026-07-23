@@ -69,6 +69,7 @@ router.beforeEach(async (to) => {
   checkVersion()
 
   if (isPublic) {
+    console.log('[router] isPublic:', to.name, 'isLoggedIn:', auth.isLoggedIn)
     if (to.name === 'login' && auth.isLoggedIn) return { name: 'beranda' }
     return true
   }

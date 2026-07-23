@@ -29,25 +29,37 @@ export function useSessionGuard() {
     })
   }
 
+  async function forceLogout() {
+    REQUIRED_KEYS.forEach(key => localStorage.removeItem(key))
+
+    if (auth.logout) {
+      await auth.logout()
+    }
+
+    // ✅ Pakai window.location untuk cek URL saat ini, tidak bergantung router
+    const currentPath = window.location.pathname
+    const publicPaths = ['/login', '/join', '/privacy-policy']
+    const isPublic = publicPaths.some(p => currentPath.startsWith(p))
+
+    console.log('[forceLogout] path:', currentPath, 'isPublic:', isPublic)
+
+    if (!isPublic) {
+      router.replace({ path: '/login' })
+    }
+  }
+
   async function checkAndGuard(): Promise<boolean> {
+    // ✅ Pakai window.location, bukan router
+    const currentPath = window.location.pathname
+    const publicPaths = ['/login', '/join', '/privacy-policy']
+    const isPublic = publicPaths.some(p => currentPath.startsWith(p))
+    if (isPublic) return true
+
     if (isSessionValid()) return true
 
     console.warn('[SessionGuard] Missing keys:', getMissingKeys())
     await forceLogout()
     return false
-  }
-
-  async function forceLogout() {
-    // Bersihkan semua localStorage
-    REQUIRED_KEYS.forEach(key => localStorage.removeItem(key))
-
-    // Clear auth store kalau ada
-    if (auth.logout) {
-      await auth.logout()
-    }
-
-    // Redirect ke login
-    router.replace({ path: '/login' })
   }
 
   return {
