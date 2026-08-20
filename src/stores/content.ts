@@ -6,15 +6,15 @@
 import { defineStore } from 'pinia'
 import { ref, computed, type Ref } from 'vue'
 import { fetchLoncengWithLink, fetchChannels, apiFavoriteItems, apiPlaylistItems, apiDetailPlaylistItems } from '@/services/api'
-import type { LoncengItem, Channel } from '@/types'
+import type { LoncengItem, Channel, EdukasiSong, PlaylistItem } from '@/types'
 import { getAudioDuration } from '@/helpers'
 
 export const useContentStore = defineStore('content', () => {
   // ── state ──────────────────────────────────────────────────────────────────
   const items = ref<LoncengItem[]>([])
-  const favoriteItems = ref<any[]>([])
-  const playlistItems = ref<any[]>([])
-  const detailPlaylistItems = ref<any[]>([])
+  const favoriteItems = ref<LoncengItem[]>([])
+  const playlistItems = ref<PlaylistItem[]>([])
+  const detailPlaylistItems = ref<LoncengItem[]>([])
   const channels = ref<Channel[]>([])
   const loading = ref(false)
   const loadingFavorite = ref(false)
@@ -26,7 +26,7 @@ export const useContentStore = defineStore('content', () => {
   const errorDetailPlaylist = ref<string | null>(null)
   const activeChannelId = ref<number>(7)    // default channel 7 (sesuai Postman)
   const lastId = ref(0)                     // cursor pagination
-  const edukasiSongs = ref<{ id: number; url_audio: string; img_url: string, isi: string, judul: string }[]>([])
+  const edukasiSongs = ref<EdukasiSong[]>([])
   const hasMore = ref(true)
   const LIMIT = 20 // sesuaikan dengan limit backend
 
@@ -47,7 +47,7 @@ export const useContentStore = defineStore('content', () => {
 
   async function loadDurationsInBatch<T extends { audio_url?: string; podcast_url?: string }>(
     list: T[],
-    targetRef: Ref<any[]>,
+    targetRef: Ref<T[]>,
     startIdx = 0
   ) {
     for (let i = 0; i < list.length; i += BATCH_SIZE) {
@@ -97,14 +97,16 @@ export const useContentStore = defineStore('content', () => {
         ? data
         : (data?.data ?? data?.items ?? [])
 
-      if (data?.edukasiSongs) {
-        edukasiSongs.value = data.edukasiSongs.map((item: any) => ({
+      const edukasiSongsRaw = Array.isArray(data) ? undefined : data?.edukasiSongs
+
+      if (edukasiSongsRaw) {
+        edukasiSongs.value = edukasiSongsRaw.map((item) => ({
           ...item,
           url_audio: item.url_audio?.trim(),
           durasi: '00:00',
         }))
 
-        data.edukasiSongs.forEach(async (item: any, idx: number) => {
+        edukasiSongsRaw.forEach(async (item, idx) => {
           if (!item.url_audio) return
           const durasi = await getAudioDuration(item.url_audio.trim())
           if (edukasiSongs.value[idx]) {
@@ -121,7 +123,7 @@ export const useContentStore = defineStore('content', () => {
       if (list.length) {
         const startIdx = reset ? 0 : items.value.length
 
-        const listWithoutDuration = list.map((item: any) => ({
+        const listWithoutDuration = list.map((item) => ({
           ...item,
           durasi: '—',
           podcast_durasi: '—',
@@ -181,7 +183,7 @@ export const useContentStore = defineStore('content', () => {
 
       if (!list.length) return
 
-      favoriteItems.value = list.map((item: any) => ({
+      favoriteItems.value = list.map((item) => ({
         ...item,
         durasi: '—',
         podcast_durasi: '—',
@@ -207,7 +209,7 @@ export const useContentStore = defineStore('content', () => {
 
     try {
       const data = await apiPlaylistItems(userTeacherId)
-      const list = Array.isArray(data)
+      const list: PlaylistItem[] = Array.isArray(data)
         ? data
         : (data?.data ?? data?.items ?? [])
 
@@ -235,7 +237,7 @@ export const useContentStore = defineStore('content', () => {
 
       if (!list.length) return
 
-      detailPlaylistItems.value = list.map((item: any) => ({
+      detailPlaylistItems.value = list.map((item) => ({
         ...item,
         durasi: '—',
         podcast_durasi: '—',

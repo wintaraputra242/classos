@@ -3,9 +3,10 @@
 import { computed } from 'vue'
 import { usePlayerStore } from '@/stores/player'
 import { useThemeStore } from '@/stores/theme'
+import type { EdukasiSong } from '@/types'
 
 const props = defineProps<{
-  songs: { url_audio?: string }[]
+  songs: EdukasiSong[]
 }>()
 
 const playerStore = usePlayerStore()

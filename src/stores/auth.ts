@@ -1,29 +1,15 @@
 import { defineStore } from 'pinia'
 import { ref, computed } from 'vue'
-import type { Token, Jenjang, StikerNewsSetting } from '@/types'
-import { logMasuk, fetchSetting, saveSetting, login as loginDashboard, logout as logoutDashboard, scanUniqId as scanUniqIdApi, apiProv, apiKab, apiFormTrial, apiReportKonten, apiRequestKonten, clearTokenCache } from '@/services/api'
+import type { Jenjang, StikerNewsSetting, ProvinsiItem, KabupatenItem, ScanUniqIdData } from '@/types'
+import { fetchSetting, saveSetting, login as loginDashboard, logout as logoutDashboard, scanUniqId as scanUniqIdApi, apiProv, apiKab, apiFormTrial, apiReportKonten, apiRequestKonten, clearTokenCache } from '@/services/api'
 import { usePlayerStore } from '@/stores/player'
-
-/**
- * Token lokal untuk demo / fallback offline.
- * Format token berisi kode jenjang, sehingga dari kode
- * kita bisa tahu jenjang sekolahnya (SD/SMP/SMA/SMK).
- * id_user adalah SpeedQ user ID yang dipakai untuk call API.
- */
-const VALID_TOKENS: Record<string, Token> = {
-  'SD-2024-ABC': { code: 'SD-2024-ABC', jenjang: 'SD', expiresAt: '2027-12-31', schoolName: 'SDN Contoh', teacherName: 'Bu Sari', id_user: 2 },
-  'SMP-2024-XYZ': { code: 'SMP-2024-XYZ', jenjang: 'SMP', expiresAt: '2027-12-31', schoolName: 'SMPN Contoh', teacherName: 'Pak Budi', id_user: 2 },
-  'SMA-2024-DEF': { code: 'SMA-2024-DEF', jenjang: 'SMA', expiresAt: '2027-12-31', schoolName: 'SMAN Contoh', teacherName: 'Pak Ahmad', id_user: 2 },
-  'SMK-2024-GHI': { code: 'SMK-2024-GHI', jenjang: 'SMK', expiresAt: '2027-12-31', schoolName: 'SMKN Contoh', teacherName: 'Bu Dewi', id_user: 2 },
-  'DEMO-001': { code: 'DEMO-001', jenjang: 'SMP', expiresAt: '2027-12-31', schoolName: 'Demo School', teacherName: 'Demo Teacher', id_user: 51466 },
-}
 
 export const useAuthStore = defineStore('auth', () => {
   interface LinkedUser { name: string; token: string; userId: string, photo: string }
   const linkedUser = ref<LinkedUser | null>(
     JSON.parse(localStorage.getItem('sn_linked_user') ?? 'null')
   )
-  const token = ref<any>(
+  const token = ref<string | null>(
     localStorage.getItem('sn_token')
   )
   const setting = ref<StikerNewsSetting>({ auto_play: 1, play_mode: 0 })
@@ -43,22 +29,16 @@ export const useAuthStore = defineStore('auth', () => {
     // return new Date(token.value.expiresAt) > new Date()
   })
 
-  const jenjang = computed<Jenjang | null>(() => token.value?.jenjang ?? null)
+  // TODO: response login dashboard API belum menyertakan id_user/jenjang milik user
+  // yang login — token di sini hanya berisi accessToken (string), berbeda dari alur
+  // demo lama yang menyimpan objek Token lengkap. Sampai backend menambahkan field
+  // tsb, jenjang & userId tetap pakai fallback (identik dengan perilaku sebelumnya).
+  const jenjang = computed<Jenjang | null>(() => null)
 
-  const userId = computed<number>(() => token.value?.id_user ?? 2)
+  const userId = computed<number>(() => 2)
 
   // ── login ──────────────────────────────────────────────────────────────────
   async function login(code: string): Promise<{ success: boolean; error?: string }> {
-    // const found = VALID_TOKENS[code.toUpperCase().trim()]
-
-    // if (!found) return { success: false, error: 'Token tidak ditemukan' }
-    // if (new Date(found.expiresAt) <= new Date()) return { success: false, error: 'Token sudah kadaluarsa' }
-
-    // token.value = found
-    // localStorage.setItem('sn_token', JSON.stringify(found))
-
-    // ← Login ke dashboard API untuk dapat accessToken & refreshToken
-
     loading.value = true
 
     try {
@@ -67,8 +47,8 @@ export const useAuthStore = defineStore('auth', () => {
         siteName.value = dashboardRes.data.name_site ?? null
         siteLogo.value = dashboardRes.data.logo_site ?? null
         isTrial.value = dashboardRes.data.isTrial ?? false
-        expiredDate.value = dashboardRes.data.expired_at ?? false
-        estimationDay.value = dashboardRes.data.sisa_hari_aktif ?? false
+        expiredDate.value = dashboardRes.data.expired_at ?? null
+        estimationDay.value = dashboardRes.data.sisa_hari_aktif ?? null
         token.value = dashboardRes.data.tokens.accessToken ?? null
         localStorage.setItem('sn_token', String(token.value))
         if (siteName.value) localStorage.setItem('sn_site_name', siteName.value)
@@ -76,22 +56,21 @@ export const useAuthStore = defineStore('auth', () => {
         if (isTrial.value) localStorage.setItem('sn_trial', isTrial.value ? '1' : '0')
         if (expiredDate.value) localStorage.setItem('sn_expired_at', expiredDate.value)
         if (estimationDay.value) localStorage.setItem('sn_estimation_day', estimationDay.value)
+
+        // Non-blocking: load setting
+        loadSetting()
       }
 
-      console.log(dashboardRes);
-
-      return dashboardRes
+      return {
+        success: dashboardRes?.success ?? false,
+        error: dashboardRes?.success ? undefined : (dashboardRes?.message ?? 'Login gagal'),
+      }
     } catch (e) {
       console.warn('[login] dashboard login failed (non-critical):', e)
+      return { success: false, error: e instanceof Error ? e.message : 'Login gagal' }
     } finally {
       loading.value = false
     }
-
-    // Non-blocking: log masuk & load setting
-    // logMasuk(found.id_user ?? 2)
-    loadSetting()
-
-    return { success: false }
   }
 
   // ── logout ─────────────────────────────────────────────────────────────────
@@ -128,10 +107,14 @@ export const useAuthStore = defineStore('auth', () => {
   }
 
   // ── setting ────────────────────────────────────────────────────────────────
+  // TODO: sama seperti TODO userId di atas — belum ada id_user untuk request
+  // setting per-user, jadi tetap no-op (identik dengan perilaku sebelumnya).
+  const SETTING_SYNC_ENABLED = false
+
   async function loadSetting() {
-    if (!token.value?.id_user) return
+    if (!SETTING_SYNC_ENABLED) return
     try {
-      const data = await fetchSetting(token.value.id_user)
+      const data = await fetchSetting(userId.value)
       if (data) {
         setting.value = {
           auto_play: data.auto_play ?? 1,
@@ -146,11 +129,11 @@ export const useAuthStore = defineStore('auth', () => {
   }
 
   async function updateSetting(patch: Partial<StikerNewsSetting>) {
-    if (!token.value?.id_user) return
+    if (!SETTING_SYNC_ENABLED) return
     setting.value = { ...setting.value, ...patch }
     try {
       await saveSetting({
-        userid: token.value.id_user,
+        userid: userId.value,
         auto_play: setting.value.auto_play as 0 | 1,
         play_mode: setting.value.play_mode as 0 | 1,
       })
@@ -160,11 +143,11 @@ export const useAuthStore = defineStore('auth', () => {
   }
 
   // Load setting jika sudah login saat app boot
-  if (isLoggedIn.value && token.value?.id_user) {
+  if (isLoggedIn.value) {
     loadSetting()
   }
 
-  async function scanUniqId(code: string): Promise<{ success: boolean; error?: string; data?: any }> {
+  async function scanUniqId(code: string): Promise<{ success: boolean; error?: string; data?: ScanUniqIdData }> {
     loading.value = true
 
     try {
@@ -181,11 +164,11 @@ export const useAuthStore = defineStore('auth', () => {
         success: false,
         error: res?.message ?? 'Kode tidak valid atau sudah kadaluarsa.',
       }
-    } catch (e: any) {
+    } catch (e) {
       console.warn('[scanUniqId] failed:', e)
       return {
         success: false,
-        error: e?.response?.data?.message ?? 'Gagal memverifikasi. Periksa koneksi internet.',
+        error: e instanceof Error ? e.message : 'Gagal memverifikasi. Periksa koneksi internet.',
       }
     } finally {
       loading.value = false
@@ -193,8 +176,8 @@ export const useAuthStore = defineStore('auth', () => {
   }
 
   // ── Trial Form ─────────────────────────────────────────────────────────────
-  const provList = ref<{ id: string | number; nama: string }[]>([])
-  const kabList = ref<{ id: string | number; nama: string }[]>([])
+  const provList = ref<ProvinsiItem[]>([])
+  const kabList = ref<KabupatenItem[]>([])
   const loadingProv = ref(false)
   const loadingKab = ref(false)
   const loadingSubmitTrial = ref(false)
@@ -245,9 +228,9 @@ export const useAuthStore = defineStore('auth', () => {
         return { success: true }
       }
       return { success: false, error: res?.message ?? 'Gagal menyimpan data.' }
-    } catch (e: any) {
+    } catch (e) {
       console.warn('[submitFormTrial] failed:', e)
-      return { success: false, error: e?.response?.data?.message ?? 'Terjadi kesalahan. Coba lagi.' }
+      return { success: false, error: e instanceof Error ? e.message : 'Terjadi kesalahan. Coba lagi.' }
     } finally {
       loadingSubmitTrial.value = false
     }
@@ -274,9 +257,9 @@ export const useAuthStore = defineStore('auth', () => {
       const res = await apiReportKonten(data)
       if (res?.data || res?.success) return { success: true }
       return { success: false, error: res?.message ?? 'Gagal mengirim laporan.' }
-    } catch (e: any) {
+    } catch (e) {
       console.warn('[submitReportKonten] failed:', e)
-      return { success: false, error: e?.response?.data?.message ?? 'Terjadi kesalahan. Coba lagi.' }
+      return { success: false, error: e instanceof Error ? e.message : 'Terjadi kesalahan. Coba lagi.' }
     } finally {
       loadingSubmitReport.value = false
     }
@@ -304,9 +287,9 @@ export const useAuthStore = defineStore('auth', () => {
       const res = await apiRequestKonten(data)
       if (res?.data || res?.success) return { success: true }
       return { success: false, error: res?.message ?? 'Gagal mengirim permintaan.' }
-    } catch (e: any) {
+    } catch (e) {
       console.warn('[submitRequestKonten] failed:', e)
-      return { success: false, error: e?.response?.data?.message ?? 'Terjadi kesalahan. Coba lagi.' }
+      return { success: false, error: e instanceof Error ? e.message : 'Terjadi kesalahan. Coba lagi.' }
     } finally {
       loadingSubmitRequest.value = false
     }

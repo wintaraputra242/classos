@@ -1,3 +1,13 @@
+// ===== API: ENVELOPE =====
+/** Bentuk umum response backend: payload di `data` atau `items`, field lain bervariasi per endpoint. */
+export interface ApiEnvelope<T = unknown> {
+  success?: boolean
+  message?: string
+  data?: T
+  items?: T
+  [key: string]: unknown
+}
+
 // ===== AUTH =====
 export type Jenjang = 'SD' | 'SMP' | 'SMA' | 'SMK'
 
@@ -10,6 +20,26 @@ export interface Token {
   id_user?: number   // SpeedQ user ID (dari API)
 }
 
+/** Payload `data` dari POST /v1/scan-uniq-id — guru yang terhubung lewat scan QR/kode */
+export interface ScanUniqIdData {
+  name: string
+  photo: string
+  token: string
+  user_id: string
+}
+
+/** Response dari POST /v1/login */
+export interface LoginApiResponse extends ApiEnvelope {
+  data?: {
+    name_site?: string
+    logo_site?: string
+    isTrial?: boolean
+    expired_at?: string
+    sisa_hari_aktif?: string
+    tokens: { accessToken: string; refreshToken: string }
+  }
+}
+
 // ===== API: CHANNEL =====
 export interface Channel {
   id_channel: number
@@ -20,29 +50,24 @@ export interface Channel {
 }
 
 // ===== API: LONCENG / KONTEN =====
+/**
+ * Item konten dari endpoint getStikernews / Show_Favorite_List / Show_Playlist.
+ * Nama field mengikuti response API asli (Bahasa Indonesia) — lihat mapToPlayerTrack
+ * di masing-masing view untuk konversi ke PlayerTrack (field bahasa Inggris).
+ */
 export interface LoncengItem {
-  id: number | string
-  id_stikernews: number
-  id_channel: number
-  title: string
-  subtitle?: string
-  emoji?: string
-  link?: string           // URL audio/video
-  duration?: string           // URL audio/video
-  duration_podcast?: string           // URL audio/video
-  thumbnail?: string
-  durasi?: string
-  podcast_durasi?: string
+  /** Primary key dari API (dipakai untuk key list & cursor pagination) */
+  id_lonceng: number
+  judul: string
+  isi?: string
+  gambar_url?: string
   audio_url?: string
   podcast_url?: string
-  image_url?: string
-  isi?: string
-  jenis?: number          // 1=audio, 2=video, dll
-  created_at?: string
-  currentTime?: number | string
-  channel_name?: string
-  isPlaying?: boolean,
-  isFavorite?: boolean,
+  durasi?: string
+  podcast_durasi?: string
+  waktu?: string
+  /** id_channel */
+  channel: number
   // ===== TOOLS KONTEN: Question / Quiz / Slide / Projek =====
   // Semua optional — belum dikirim backend, UI fallback ke empty state
   questions?: ContentQuestion[]
@@ -60,6 +85,31 @@ export interface ContentQuiz {
   question: string
   options: string[]
   correct_index: number
+}
+
+/** Response dari fetchLoncengWithLink — payload utama + lagu edukasi hari ini */
+export interface LoncengApiResponse extends ApiEnvelope<LoncengItem[]> {
+  edukasiSongs?: EdukasiSong[]
+}
+
+// ===== API: WILAYAH (form trial) =====
+export interface ProvinsiItem {
+  id_prov: string | number
+  prov: string
+}
+
+export interface KabupatenItem {
+  id_kab: string | number
+  kab: string
+}
+
+// ===== API: PLAYLIST =====
+export interface PlaylistItem {
+  id: number
+  name: string
+  content_count: number
+  thumbnail_url?: string
+  thumbnail_title?: string
 }
 
 // ===== API: SETTING =====
@@ -101,6 +151,17 @@ export interface LaguEdukasi extends Content {
   artist?: string
 }
 
+/** Lagu edukasi (endpoint terpisah dari LoncengItem, field API dalam Bahasa Indonesia) */
+export interface EdukasiSong {
+  id: string | number
+  judul?: string
+  isi?: string
+  img_url?: string
+  url_audio?: string
+  durasi?: string
+  podcast_durasi?: string
+}
+
 export interface KarakterItem {
   id: string
   emoji: string
@@ -136,6 +197,10 @@ export interface PlayerTrack {
   slides?: string[]
   project?: string
 }
+
+// ===== CLASS SESSION (alur briefing → listening → summary → end class) =====
+export type StepKey = 'briefing' | 'listening' | 'summary' | 'endclass'
+export type StepStatusVal = 'locked' | 'active' | 'done'
 
 // ===== APP STATE =====
 export type ThemeMode = 'dark' | 'light'

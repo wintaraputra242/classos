@@ -4,32 +4,13 @@ import { usePlayerStore } from '@/stores/player'
 import { useContentStore } from '@/stores/content'
 import { gradientFor } from '@/composables/useContent'
 import { ref } from 'vue'
+import type { LoncengItem, PlaylistItem } from '@/types'
 
 interface LinkedUser {
   name: string
   token: string
   userId: string
   photo: string
-}
-
-interface LoncengItem {
-  id_lonceng: number
-  judul: string
-  isi?: string
-  gambar_url?: string
-  audio_url?: string
-  podcast_url?: string
-  durasi?: string
-  waktu?: string
-  channel: number
-}
-
-interface PlaylistItem {
-  id: number
-  name: string
-  content_count: number
-  thumbnail_url?: string
-  thumbnail_title?: string
 }
 
 const props = defineProps<{
@@ -43,7 +24,7 @@ const props = defineProps<{
   manualCode: string
   verifying: boolean
   cameraError?: string
-  videoRef: any
+  videoRef: HTMLVideoElement | null
   photoError: boolean
 }>()
 

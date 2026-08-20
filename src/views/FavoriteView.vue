@@ -302,7 +302,7 @@ async function verifyCode(code: string) {
   try {
     const res = await auth.scanUniqId(code)
 
-    if (res.success) {
+    if (res.success && res.data) {
       const data = res.data
       const namaGuru = data.name ?? 'Bapak atau Ibu Guru'
 

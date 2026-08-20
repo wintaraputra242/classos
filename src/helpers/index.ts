@@ -56,7 +56,7 @@ export function generateSessionId(length = 32): string {
 
   let result = ''
   for (let i = 0; i < length; i++) {
-    result += chars[bytes[i] % chars.length]
+    result += chars.charAt(bytes[i]! % chars.length)
   }
   return result
 }

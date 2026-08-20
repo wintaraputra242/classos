@@ -4,6 +4,7 @@ import { usePlayerStore } from '@/stores/player'
 import { useContentStore } from '@/stores/content'
 import { gradientFor } from '@/composables/useContent'
 import { ref } from 'vue';
+import type { LoncengItem, PlaylistItem, StepKey, StepStatusVal } from '@/types'
 
 const props = defineProps<{
   linkedUser: { name: string; token: string; userId: string; photo: string } | null
@@ -16,13 +17,13 @@ const props = defineProps<{
   verifyError: string
   cameraError: string
   activeMenuTab: 'favorit' | 'playlist'
-  selectedPlaylist: any
-  selectedSessionPlaylist: any
+  selectedPlaylist: PlaylistItem | null
+  selectedSessionPlaylist: PlaylistItem | null
   sessionStarted: boolean
-  stepStatus: Record<string, string>
+  stepStatus: Record<StepKey, StepStatusVal>
   isSpeaking: boolean
   isPaused: boolean
-  speakingStep: string | null
+  speakingStep: StepKey | null
   listeningStatus: boolean
   listeningElapsed: number
   channelItems: Record<number, string>
@@ -39,14 +40,14 @@ const emit = defineEmits<{
   'submit-manual': []
   'set-active-tab': [tab: 'favorit' | 'playlist']
   'refresh-tab': []
-  'play-favorite': [item: any]
-  'detail-favorite': [item: any]
+  'play-favorite': [item: LoncengItem]
+  'detail-favorite': [item: LoncengItem]
   'go-to-full-list': []
-  'open-playlist-detail': [playlist: any]
+  'open-playlist-detail': [playlist: PlaylistItem]
   'back-playlist': []
-  'play-playlist': [item: any]
-  'detail-playlist': [item: any]
-  'open-step': [key: string]
+  'play-playlist': [item: LoncengItem]
+  'detail-playlist': [item: LoncengItem]
+  'open-step': [key: StepKey]
   'start-session': []
   'cancel-session': []
   'reset-session': []
@@ -64,14 +65,14 @@ function formatListeningTime(secs: number): string {
   return `${m}:${s}`
 }
 
-function stepClass(key: string) {
+function stepClass(key: StepKey) {
   const s = props.stepStatus[key]
   if (s === 'done') return 'dark:bg-zinc-800 bg-gray-50 dark:text-gray-300 text-gray-600 cursor-pointer hover:dark:bg-zinc-700 hover:bg-gray-100 border dark:border-zinc-700 border-gray-200 transition-colors'
   if (s === 'active') return 'bg-brand-red dark:bg-brand-green text-white hover:opacity-90 cursor-pointer'
   return 'dark:bg-zinc-800/50 bg-gray-50 dark:text-gray-600 text-gray-300 cursor-not-allowed opacity-60'
 }
 
-function stepNumClass(key: string) {
+function stepNumClass(key: StepKey) {
   const s = props.stepStatus[key]
   if (s === 'done') return 'bg-brand-red/15 dark:bg-brand-green/20 text-brand-red dark:text-brand-green'
   if (s === 'active') return 'bg-white/20 text-white'

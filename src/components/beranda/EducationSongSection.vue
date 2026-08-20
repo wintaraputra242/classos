@@ -3,13 +3,14 @@
 import { RouterLink } from 'vue-router'
 import { useThemeStore } from '@/stores/theme'
 import { usePlayerStore } from '@/stores/player'
+import type { EdukasiSong, KarakterItem } from '@/types'
 
 defineProps<{
-  todayEdukasiSong: any
+  todayEdukasiSong: EdukasiSong | null
   isEdukasiActive: boolean
   isEdukasiPlaying: boolean
   progressPercent: number
-  displayed: any[]
+  displayed: KarakterItem[]
 }>()
 
 const emit = defineEmits<{
@@ -99,7 +100,7 @@ function formatTime(secs: number): string {
                 :style="!isEdukasiPlaying ? 'margin-left:1px' : ''" />
             </button>
             <span class="text-[10px] dark:text-gray-500 text-gray-400 tabular-nums">
-              {{ isEdukasiActive ? formatTime(playerStore.currentTime) : (todayEdukasiSong as any).durasi }}
+              {{ isEdukasiActive ? formatTime(playerStore.currentTime) : todayEdukasiSong?.durasi }}
             </span>
           </div>
         </div>

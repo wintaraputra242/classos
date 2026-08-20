@@ -3,17 +3,9 @@
 import { usePlayerStore } from '@/stores/player'
 import { useContentStore } from '@/stores/content'
 import { gradientFor } from '@/composables/useContent'
+import type { EdukasiSong } from '@/types'
 
-interface EdukasiSong {
-  id: string | number
-  judul?: string
-  isi?: string
-  img_url?: string
-  url_audio?: string
-  durasi?: string
-}
-
-const props = defineProps<{
+defineProps<{
   songs: EdukasiSong[]
 }>()
 

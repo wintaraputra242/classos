@@ -1,20 +1,10 @@
 /**
- * Composable untuk dipakai di views:
- * - auto-load konten saat mounted
- * - mapping LoncengItem → PlayerTrack
- * - helper play dari LoncengItem
+ * Composable untuk dipakai di views: auto-load konten & channel saat mounted.
  */
 import { onMounted } from 'vue'
 import { useContentStore } from '@/stores/content'
 import { usePlayerStore } from '@/stores/player'
 import { useAuthStore } from '@/stores/auth'
-import type { LoncengItem, PlayerTrack } from '@/types'
-
-/** Emoji fallback berdasarkan index */
-const EMOJIS = ['🎵', '📰', '💡', '🌍', '❤️', '🌟', '💪', '🎯', '📚', '🔒', '🛡️', '🤝']
-export function emojiFor(item: LoncengItem) {
-  return EMOJIS[item.id_stikernews % EMOJIS.length]
-}
 
 /** Warna gradient berdasarkan id */
 const GRADIENTS = [
@@ -32,30 +22,6 @@ export function gradientFor(id: number | undefined | null) {
   return GRADIENTS[(id ?? 0) % GRADIENTS.length] as { from: string; to: string }
 }
 
-/** Konversi LoncengItem → PlayerTrack */
-export function loncengToTrack(item: LoncengItem): PlayerTrack {
-  console.log(item);
-
-  return {
-    id: String(item.id_stikernews),
-    id_stikernews: item.id_stikernews,
-    id_channel: item.id_channel,
-    title: item.title,
-    subtitle: item.channel_name ?? `Channel ${item.id_channel}`,
-    emoji: emojiFor(item) ?? '🎵',
-    duration: item.duration ?? '1:00',
-    duration_podcast: item.duration_podcast ?? '1:00',
-    audio_url: item.audio_url ?? '',
-    podcast_url: item.podcast_url ?? '',
-    image_url: item.image_url ?? '',
-    isi: item.isi ?? '',
-    currentTime: 0,
-    isPlaying: false,
-    isFavorite: false,
-    link: item.link ?? undefined,
-  }
-}
-
 export function useContent(channelId?: number) {
   const contentStore = useContentStore()
   const playerStore = usePlayerStore()
@@ -70,13 +36,5 @@ export function useContent(channelId?: number) {
     }
   })
 
-  function playItem(item: LoncengItem) {
-    playerStore.play(loncengToTrack(item))
-  }
-
-  function setItem(item: LoncengItem) {
-    playerStore.setItemPlay(loncengToTrack(item))
-  }
-
-  return { contentStore, playerStore, auth, playItem, gradientFor, emojiFor, setItem }
+  return { contentStore, playerStore, auth, gradientFor }
 }

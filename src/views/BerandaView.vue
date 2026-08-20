@@ -5,10 +5,9 @@ import { useThemeStore } from '@/stores/theme'
 import { usePlayerStore } from '@/stores/player'
 import { useContentStore } from '@/stores/content'
 import { useAuthStore } from '@/stores/auth'
-import { useContent, gradientFor, emojiFor } from '@/composables/useContent'
+import { useContent } from '@/composables/useContent'
 import { stikerNewsData, karakterData, getRandomItems } from '@/data/mockData'
-import type { PlayerTrack } from '@/types'
-import jsQR from 'jsqr'
+import type { LoncengItem, PlayerTrack, StepKey, StepStatusVal, PlaylistItem } from '@/types'
 import TrackDetailPopup from '@/components/ui/TrackDetailPopup.vue'
 // ⚠️ Dihapus — face-api.js sudah tidak dipakai sama sekali (dulu dicoba, range deteksinya
 // kurang, sekarang pindah ke BlazeFace). Import mati ini tetap ikut bundle tfjs-core-nya
@@ -37,7 +36,7 @@ const playerStore = usePlayerStore()
 const contentStore = useContentStore()
 const classSession = useClassSessionStore()
 const auth = useAuthStore()
-const { playItem, setItem } = useContent()
+useContent()
 
 // ── Fallback lokal ─────────────────────────────────────────────────────────
 const localRandomNews = computed(() => getRandomItems(stikerNewsData, 5))
@@ -94,7 +93,7 @@ const heroItems = computed(() => {
 })
 
 const currentIndex = ref(0)
-const currentItem = computed<any>(() => heroItems.value[currentIndex.value] ?? null)
+const currentItem = computed<LoncengItem | null>(() => heroItems.value[currentIndex.value] ?? null)
 
 function goTo(idx: number) {
   currentIndex.value = idx
@@ -197,13 +196,13 @@ function playEdukasiSong() {
     title: song.judul ?? 'Lagu Edukasi',
     subtitle: song.isi ?? 'StikerNews Pelajar',
     emoji: '🎵',
-    duration: (song as any)?.durasi,
+    duration: song.durasi ?? '',
     duration_podcast: '',
-    audio_url: song.url_audio,
+    audio_url: song.url_audio ?? '',
     channel_name: 'lagu',
     type: 'lagu',
     podcast_url: '',
-    image_url: song.img_url,
+    image_url: song.img_url ?? '',
     isi: '',
     currentTime: 0,
     isPlaying: true,
@@ -242,12 +241,6 @@ const progressPercent = computed(() => {
   return Math.min(100, (playerStore.currentTime / totalSeconds.value) * 100)
 })
 
-function formatTime(secs: number): string {
-  const m = Math.floor(secs / 60)
-  const s = Math.floor(secs % 60)
-  return `${m}:${s.toString().padStart(2, '0')}`
-}
-
 function parseDuration(dur: string): number {
   const [m, s] = dur.split(':').map(Number)
   return (m ?? 0) * 60 + (s ?? 0)
@@ -285,14 +278,6 @@ function playPlaylist(item: any) {
     '/favorite',
     { type: 'playlist' }
   )
-}
-
-function formatWaktu(waktu: string): string {
-  if (!waktu) return '—'
-  const bulan = ['Jan', 'Feb', 'Mar', 'Apr', 'Mei', 'Jun', 'Jul', 'Agu', 'Sep', 'Okt', 'Nov', 'Des']
-  const [tanggal] = waktu.split(' ')
-  const [dd, mm]: any = tanggal?.split('-')
-  return `${parseInt(dd)} ${bulan[parseInt(mm) - 1]}`
 }
 
 // ── QR / Favorit ───────────────────────────────────────────────────────────
@@ -517,7 +502,7 @@ async function verifyCode(code: string) {
   try {
     const res = await auth.scanUniqId(code)
 
-    if (res.success) {
+    if (res.success && res.data) {
       const data = res.data
       const namaGuru = data.name ?? 'Bapak atau Ibu Guru'
 
@@ -1064,7 +1049,7 @@ function goToFullList() {
   })
 }
 
-const selectedPlaylist = ref<null | { id: number; name: string; content_count: number; thumbnail_url?: string; thumbnail_title?: string }>(null)
+const selectedPlaylist = ref<PlaylistItem | null>(null)
 
 async function openPlaylistDetail(playlist: typeof selectedPlaylist.value) {
   selectedPlaylist.value = playlist
@@ -1130,10 +1115,7 @@ async function closeVerifyErrorModal(mode?: 'camera' | 'manual') {
 // ── Session flow (step berurutan) ──────────────────────────────────────────
 const sessionStarted = ref(false)
 // const selectedPlaylistId = ref('')
-const selectedSessionPlaylist = ref<typeof selectedPlaylist.value>(null)
-
-type StepKey = 'briefing' | 'listening' | 'summary' | 'endclass'
-type StepStatusVal = 'locked' | 'active' | 'done'
+const selectedSessionPlaylist = ref<PlaylistItem | null>(null)
 
 const stepStatus = ref<Record<StepKey, StepStatusVal>>({
   briefing: 'locked',
@@ -1141,36 +1123,6 @@ const stepStatus = ref<Record<StepKey, StepStatusVal>>({
   summary: 'locked',
   endclass: 'locked',
 })
-
-const currentStep = computed<StepKey | null>(() => {
-  const order: StepKey[] = ['briefing', 'listening', 'summary', 'endclass']
-  return order.find(k => stepStatus.value[k] === 'active') ?? null
-})
-
-function stepClass(key: StepKey) {
-  const s = stepStatus.value[key]
-  if (s === 'done') return 'dark:bg-zinc-800 bg-gray-50 dark:text-gray-300 text-gray-600 cursor-pointer hover:dark:bg-zinc-700 hover:bg-gray-100 border dark:border-zinc-700 border-gray-200 transition-colors'
-  if (s === 'active') return 'bg-brand-red dark:bg-brand-green text-white hover:opacity-90 cursor-pointer'
-  return 'dark:bg-zinc-800/50 bg-gray-50 dark:text-gray-600 text-gray-300 cursor-not-allowed opacity-60'
-}
-
-function stepNumClass(key: StepKey) {
-  const s = stepStatus.value[key]
-  if (s === 'done') return 'bg-brand-red/15 dark:bg-brand-green/20 text-brand-red dark:text-brand-green'
-  if (s === 'active') return 'bg-white/20 text-white'
-  return 'dark:bg-zinc-700 bg-gray-200 dark:text-gray-500 text-gray-400'
-}
-
-function playSessionPlaylist() {
-  if (!contentStore.detailPlaylistItems.length) return
-  const tracks = contentStore.detailPlaylistItems
-    .filter(i => i?.audio_url || i?.podcast_url)
-    .map(mapToPlayerTrack)
-  if (!tracks.length) return
-
-  playerStore.queueListName = selectedSessionPlaylist.value?.name ?? 'Playlist Sesi'
-  playerStore.playWithQueue(tracks[0], tracks)
-}
 
 const SESSION_STATE_KEY = 'classos_session_state'
 const SESSION_ID_KEY = 'classos_id_state'
@@ -1318,7 +1270,7 @@ function unlockNext(current: StepKey) {
   const idx = order.indexOf(current)
   stepStatus.value[current] = 'done'
   if (idx + 1 < order.length) {
-    stepStatus.value[order[idx + 1]] = 'active'
+    stepStatus.value[order[idx + 1]!] = 'active'
   }
   saveSessionState(localStorage.getItem(SESSION_ID_KEY) as string) // ← simpan setiap step selesai
 }
@@ -1605,10 +1557,6 @@ async function completeListening() {
   _finalTranscript = ''
 }
 
-const transcriptFinal = _transcriptLog.length > 0
-  ? _transcriptLog.join(' ')
-  : transcriptText.value.trim() || _finalTranscript.trim() || 'Tidak ada percakapan yang tercatat selama sesi listening.'
-
 // ── Summary generation (placeholder API) ────────────────────────────────
 
 function completeSummary() {
@@ -1645,7 +1593,6 @@ function startScoreAnimation() {
   const duration = 10000
   const target = sessionScore.value
   const startedAt = Date.now()
-  let rafId: number
 
   function tick() {
     const elapsed = Date.now() - startedAt
@@ -1660,7 +1607,7 @@ function startScoreAnimation() {
     }
 
     if (progress < 1) {
-      rafId = requestAnimationFrame(tick)
+      requestAnimationFrame(tick)
     } else {
       animatedScoreDisplay.value = target
       scoreAnimating.value = false
@@ -1672,7 +1619,7 @@ function startScoreAnimation() {
     }
   }
 
-  rafId = requestAnimationFrame(tick)
+  requestAnimationFrame(tick)
 }
 
 function closeSessionReport() {
@@ -2182,7 +2129,7 @@ onUnmounted(() => {
         class="flex-shrink-0 px-3 py-1.5 rounded-full text-xs font-bold transition-colors whitespace-nowrap" :class="contentStore.activeChannelId === ch.id_channel
           ? 'bg-brand-green text-white'
           : 'dark:bg-gray-800 bg-gray-100 dark:text-gray-300 text-gray-600 hover:dark:bg-gray-700'"
-        @click="switchChannel(ch.id_channel)">
+        @click="contentStore.switchChannel(ch.id_channel, auth.userId)">
         {{ ch.nama_channel }}
       </button>
     </div>

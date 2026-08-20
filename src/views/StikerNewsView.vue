@@ -4,7 +4,7 @@ import { useRoute } from 'vue-router'
 import { useContentStore } from '@/stores/content'
 import { usePlayerStore } from '@/stores/player'
 import { useAuthStore } from '@/stores/auth'
-import { useContent, gradientFor } from '@/composables/useContent'
+import { useContent } from '@/composables/useContent'
 import { stikerNewsData, getTodayItems } from '@/data/mockData'
 import type { Content, Jenjang, PlayerTrack } from '@/types'
 import { useThemeStore } from '@/stores/theme'
@@ -20,7 +20,7 @@ const contentStore = useContentStore()
 const playerStore = usePlayerStore()
 const appStore = useAppStore()
 const auth = useAuthStore()
-const { playItem } = useContent()
+useContent()
 const themeStore = useThemeStore()
 
 const showTrackPopup = ref(false)

@@ -155,7 +155,7 @@ onUnmounted(() => {
       </div>
 
       <!-- Tombol retry manual -->
-      <button @click="window.location.reload()"
+      <button @click="errorReload"
         class="flex items-center gap-2 px-6 py-3 rounded-2xl bg-brand-red dark:bg-brand-green text-white text-sm font-bold hover:opacity-80 transition-opacity">
         <i class="ri-refresh-line" />
         Coba Sekarang

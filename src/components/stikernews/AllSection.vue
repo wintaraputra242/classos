@@ -7,24 +7,12 @@ import { useThemeStore } from '@/stores/theme'
 import { useAuthStore } from '@/stores/auth'
 import { gradientFor } from '@/composables/useContent'
 import { nextTick } from 'vue'
+import type { LoncengItem } from '@/types'
 
 interface FilterItem {
   label: string
   channelId: number
   color?: string
-}
-
-interface LoncengItem {
-  id_lonceng: number
-  judul: string
-  isi: string
-  gambar_url?: string
-  audio_url?: string
-  podcast_url?: string
-  durasi?: string
-  podcast_durasi?: string
-  waktu: string
-  channel: number
 }
 
 const props = defineProps<{
@@ -123,12 +111,13 @@ onUnmounted(() => {
 })
 
 // ── Helpers ────────────────────────────────────────────────────────────────
-function formatWaktu(waktu: string): string {
+function formatWaktu(waktu?: string): string {
   if (!waktu) return '—'
   const bulan = ['Jan', 'Feb', 'Mar', 'Apr', 'Mei', 'Jun', 'Jul', 'Agu', 'Sep', 'Okt', 'Nov', 'Des']
   const [tanggal] = waktu.split(' ')
-  const [dd, mm]: any = tanggal?.split('-')
-  return `${parseInt(dd)} ${bulan[parseInt(mm) - 1]}`
+  const [dd, mm] = (tanggal ?? '').split('-').map(Number)
+  if (!dd || !mm) return '—'
+  return `${dd} ${bulan[mm - 1]}`
 }
 
 function formatTime(secs: number): string {

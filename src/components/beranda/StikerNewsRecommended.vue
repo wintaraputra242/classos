@@ -4,23 +4,24 @@ import { RouterLink } from 'vue-router'
 import { useThemeStore } from '@/stores/theme'
 import { usePlayerStore } from '@/stores/player'
 import { gradientFor } from '@/composables/useContent'
+import type { LoncengItem, Content } from '@/types'
 
-const props = defineProps<{
-  apiRandomItems: any[]
-  localRandomNews: any[]
+defineProps<{
+  apiRandomItems: LoncengItem[]
+  localRandomNews: Content[]
   loading?: boolean
   channelItems: Record<number, string>
 }>()
 
 const emit = defineEmits<{
-  'play': [item: any]
-  'detail': [item: any]
+  'play': [item: LoncengItem]
+  'detail': [item: LoncengItem]
 }>()
 
 const themeStore = useThemeStore()
 const playerStore = usePlayerStore()
 
-const localGradients: any = [
+const localGradients: { from: string; to: string }[] = [
   { from: '#1e3a5f', to: '#1a73e8' },
   { from: '#1a3a2a', to: '#1DB954' },
   { from: '#5f3a0d', to: '#f59e0b' },
@@ -30,15 +31,16 @@ const localGradients: any = [
 
 function localGradient(id: string) {
   const idx = id.charCodeAt(id.length - 1) % localGradients.length
-  return localGradients[idx]
+  return localGradients[idx] ?? localGradients[0]!
 }
 
-function formatWaktu(waktu: string): string {
+function formatWaktu(waktu?: string): string {
   if (!waktu) return '—'
   const bulan = ['Jan', 'Feb', 'Mar', 'Apr', 'Mei', 'Jun', 'Jul', 'Agu', 'Sep', 'Okt', 'Nov', 'Des']
   const [tanggal] = waktu.split(' ')
-  const [dd, mm]: any = tanggal?.split('-')
-  return `${parseInt(dd)} ${bulan[parseInt(mm) - 1]}`
+  const [dd, mm] = (tanggal ?? '').split('-').map(Number)
+  if (!dd || !mm) return '—'
+  return `${dd} ${bulan[mm - 1]}`
 }
 
 function formatTime(secs: number): string {

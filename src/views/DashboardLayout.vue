@@ -108,14 +108,12 @@ async function submitSurvey() {
 function onProvChange() {
   surveyForm.value.id_kabupaten_kota = ''
   surveyForm.value.kabupaten = ''
-  const found = auth.provList.find(p => p.id === surveyForm.value.id_provinsi)
-  surveyForm.value.provinsi = found?.nama ?? ''
+  surveyForm.value.provinsi = (surveyForm.value.id_provinsi as string).split('-')[1] ?? ''
 }
 
 // Watch kabupaten untuk sync namanya
 watch(() => surveyForm.value.id_kabupaten_kota, (id) => {
-  const found = auth.kabList.find(k => k.id === id)
-  surveyForm.value.kabupaten = found?.nama ?? ''
+  surveyForm.value.kabupaten = id.toString().split('-')[1] ?? ''
 })
 
 const isSubmitFormTrial = ref(localStorage.getItem('sn_trial_survey_done') === '1' ? true : false)

@@ -3,6 +3,7 @@ import { usePlayerStore } from '@/stores/player'
 import { useContentStore } from '@/stores/content'
 import { useThemeStore } from '@/stores/theme'
 import { gradientFor } from '@/composables/useContent'
+import type { LoncengItem } from '@/types'
 
 interface FilterItem {
   label: string
@@ -10,20 +11,7 @@ interface FilterItem {
   color?: string // ← jadikan opsional
 }
 
-interface LoncengItem {
-  id_lonceng: number
-  judul: string
-  isi: string
-  gambar_url?: string
-  audio_url?: string
-  podcast_url?: string
-  durasi?: string
-  podcast_durasi?: string
-  waktu: string
-  channel: number
-}
-
-const props = defineProps<{
+defineProps<{
   displayToday: LoncengItem[]
   activeFilter: FilterItem
 }>()
@@ -37,12 +25,13 @@ const playerStore = usePlayerStore()
 const contentStore = useContentStore()
 const themeStore = useThemeStore()
 
-function formatWaktu(waktu: string): string {
+function formatWaktu(waktu?: string): string {
   if (!waktu) return '—'
   const bulan = ['Jan', 'Feb', 'Mar', 'Apr', 'Mei', 'Jun', 'Jul', 'Agu', 'Sep', 'Okt', 'Nov', 'Des']
   const [tanggal] = waktu.split(' ')
-  const [dd, mm]: any = tanggal?.split('-')
-  return `${parseInt(dd)} ${bulan[parseInt(mm) - 1]}`
+  const [dd, mm] = (tanggal ?? '').split('-').map(Number)
+  if (!dd || !mm) return '—'
+  return `${dd} ${bulan[mm - 1]}`
 }
 
 function formatTime(secs: number): string {

@@ -1,41 +1,38 @@
 <script setup lang="ts">
-import { computed, ref } from 'vue'
+import { computed } from 'vue'
 import { usePlayerStore } from '@/stores/player'
 import { useContentStore } from '@/stores/content'
-import { useContent, gradientFor } from '@/composables/useContent'
-import type { PlayerTrack } from '@/types'
-import { useThemeStore } from '@/stores/theme'
-import { useAuthStore } from '@/stores/auth'
+import { useContent } from '@/composables/useContent'
+import type { EdukasiSong, PlayerTrack } from '@/types'
 import CurrentPlaySection from '@/components/education-songs/CurrentPlaySection.vue'
 import AllSongSection from '@/components/education-songs/AllSongSection.vue'
 
 const playerStore = usePlayerStore()
 const contentStore = useContentStore()
-const auth = useAuthStore()
-const { playItem } = useContent()
+useContent()
 
 // Ambil langsung dari store
 const edukasiSongs = computed(() => contentStore.edukasiSongs ?? [])
 
-function isActive(song: typeof edukasiSongs.value[0]) {
+function isActive(song: EdukasiSong) {
   return playerStore.currentTrack?.link === song.url_audio?.trim()
 }
 
-function mapEdukasiToPlayerTrack(song: any): PlayerTrack {
+function mapEdukasiToPlayerTrack(song: EdukasiSong): PlayerTrack {
   return {
     id: `${song.id}`,
-    id_stikernews: song.id,
+    id_stikernews: Number(song.id),
     id_channel: 0,
     title: song.judul ?? 'Lagu Edukasi',
     channel_name: 'StikerNews Pelajar',
     subtitle: song.isi ?? 'StikerNews Pelajar',
     emoji: '🎵',
-    duration: song?.durasi,
+    duration: song.durasi ?? '',
     duration_podcast: '',
-    audio_url: song.url_audio,
+    audio_url: song.url_audio ?? '',
     podcast_url: '',
     type: 'lagu',
-    image_url: song.img_url,
+    image_url: song.img_url ?? '',
     isi: '',
     currentTime: 0,
     isPlaying: false,
@@ -44,7 +41,7 @@ function mapEdukasiToPlayerTrack(song: any): PlayerTrack {
   }
 }
 
-function playEdukasiSong(item: any) {
+function playEdukasiSong(item: EdukasiSong) {
   // ✅ Selalu clear preview sebelum play
   playerStore.clearPreview()
 
@@ -56,7 +53,7 @@ function playEdukasiSong(item: any) {
 
   const track = mapEdukasiToPlayerTrack(item)
   const queueTracks = edukasiSongs.value
-    ?.filter((i: any) => i?.url_audio)
+    ?.filter((i) => i?.url_audio)
     .map(mapEdukasiToPlayerTrack)
 
   playerStore.queueListName = 'Lagu Edukasi'

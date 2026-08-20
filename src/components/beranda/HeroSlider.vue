@@ -1,20 +1,22 @@
 <!-- components/beranda/HeroSlider.vue -->
 <script setup lang="ts">
+import type { CSSProperties } from 'vue'
 import { useThemeStore } from '@/stores/theme'
 import { usePlayerStore } from '@/stores/player'
+import type { LoncengItem } from '@/types'
 
-const props = defineProps<{
-  heroItems: any[]
+defineProps<{
+  heroItems: LoncengItem[]
   currentIndex: number
-  currentItem: any
+  currentItem: LoncengItem | null
   loading?: boolean
-  orbs?: any[]
+  orbs?: CSSProperties[]
 }>()
 
 const emit = defineEmits<{
   'go-to': [index: number]
-  'play': [item: any]
-  'detail': [item: any]
+  'play': [item: LoncengItem]
+  'detail': [item: LoncengItem]
 }>()
 
 const themeStore = useThemeStore()

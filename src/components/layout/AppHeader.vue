@@ -291,7 +291,7 @@ onUnmounted(() => document.removeEventListener('click', handleOutsideClick))
         <button
           class="relative w-9 h-9 rounded-full bg-gradient-to-br from-brand-green to-blue-500 flex items-center justify-center text-white text-sm font-bold hover:opacity-80 transition-opacity"
           @click.stop="showUserMenu = !showUserMenu">
-          {{ authStore.token?.teacherName?.[0] || 'P' }}
+          P
 
           <!-- Trial Badge -->
           <span v-if="authStore.isTrial"
@@ -305,7 +305,7 @@ onUnmounted(() => document.removeEventListener('click', handleOutsideClick))
           class="absolute top-14 right-4 rounded-xl p-3 z-50 min-w-[180px] border border-zinc-600"
           style="background-color: #2d2d2d; box-shadow: 0 8px 32px rgba(0,0,0,0.4);">
 
-          <p class="text-xs font-bold dark:text-white text-gray-900">{{ authStore.token?.schoolName ?? schoolName }}</p>
+          <p class="text-xs font-bold dark:text-white text-gray-900">{{ schoolName }}</p>
 
           <div v-if="authStore.isTrial"
             class="mt-2 inline-flex items-center gap-1 px-2 py-1 rounded-full bg-blue-100 dark:bg-blue-900/30 text-blue-700 dark:text-blue-300 text-[10px] font-bold">

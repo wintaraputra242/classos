@@ -5,6 +5,20 @@
  * BASE_DASHBOARD : https://classos.isn-speed.com/api → auth & dashboard
  */
 
+import type {
+  ApiEnvelope,
+  Channel,
+  LoncengApiResponse,
+  LoncengItem,
+  LoginApiResponse,
+  AnalyticsItem,
+  ProvinsiItem,
+  KabupatenItem,
+  PlaylistItem,
+  ScanUniqIdData,
+  StikerNewsSetting,
+} from '@/types'
+
 const BASE_BETA = 'https://id-beta.isn-speed.com'
 const BASE_PROD = 'https://id.isn-speed.com'
 // const BASE_DASHBOARD = 'https://classos.isn-speed.com/api'
@@ -50,8 +64,7 @@ async function doRefreshToken(): Promise<string> {
     throw new Error('Refresh token expired, please login again')
   }
 
-  const data = await res.json()
-  console.log(data);
+  const data = await res.json() as ApiEnvelope<{ accessToken: string; refreshToken?: string }>
 
   const newAccess = data?.data?.accessToken
   const newRefresh = data?.data?.refreshToken
@@ -100,7 +113,7 @@ async function getValidAccessToken(): Promise<string> {
 
 // ─── helpers ─────────────────────────────────────────────────────────────────
 
-async function postForm(baseUrl: string, path: string, params: Record<string, string | number>, accessToken?: string) {
+async function postForm<T = unknown>(baseUrl: string, path: string, params: Record<string, string | number>, accessToken?: string): Promise<T> {
   const body = new URLSearchParams()
   Object.entries(params).forEach(([k, v]) => body.append(k, String(v)))
 
@@ -119,14 +132,14 @@ async function postForm(baseUrl: string, path: string, params: Record<string, st
   })
 
   if (!res.ok) throw new Error(`API ${res.status}: ${path}`)
-  return res.json()
+  return res.json() as Promise<T>
 }
 
-async function getQuery(
+async function getQuery<T = unknown>(
   baseUrl: string,
   path: string,
   params: Record<string, string | number | null | undefined> = {}
-) {
+): Promise<T> {
   const qs = new URLSearchParams()
   Object.entries(params).forEach(([k, v]) => {
     if (v !== null && v !== undefined && v !== '') qs.append(k, String(v))
@@ -134,7 +147,7 @@ async function getQuery(
   const sep = qs.toString() ? '?' : ''
   const res = await fetch(`${baseUrl}/${path}${sep}${qs}`, { method: 'GET' })
   if (!res.ok) throw new Error(`API ${res.status}: ${path}`)
-  return res.json()
+  return res.json() as Promise<T>
 }
 
 // ─── Error Event System ───────────────────────────────────────────────────────
@@ -151,7 +164,7 @@ function _emitError(status: number, message: string, path: string) {
 }
 
 // Dashboard API dengan Bearer token + auto refresh
-async function dashboardPost(path: string, body: Record<string, unknown>, retry = true): Promise<any> {
+async function dashboardPost<T = unknown>(path: string, body: Record<string, unknown>, retry = true): Promise<T> {
   const token = await getValidAccessToken()
   const res = await fetch(`${BASE_DASHBOARD}/${path}`, {
     method: 'POST',
@@ -166,7 +179,7 @@ async function dashboardPost(path: string, body: Record<string, unknown>, retry 
     _accessToken = null // ← invalidate dulu
     try {
       await ensureFreshToken() // ← single-flight, sudah panggil setTokens di dalamnya
-      return dashboardPost(path, body, false)  // ← retry dengan token baru
+      return dashboardPost<T>(path, body, false)  // ← retry dengan token baru
     } catch {
       clearTokens()
       _emitError(401, 'Sesi habis, silakan login kembali.', path)
@@ -184,12 +197,12 @@ async function dashboardPost(path: string, body: Record<string, unknown>, retry 
     throw new Error(`API ${res.status}: ${path}`)
   }
 
-  return res.json()
+  return res.json() as Promise<T>
 }
 
 // ─── Update dashboardGet ──────────────────────────────────────────────────────
 
-async function dashboardGet(path: string, params: Record<string, string | number | null | undefined> = {}, retry = true): Promise<any> {
+async function dashboardGet<T = unknown>(path: string, params: Record<string, string | number | null | undefined> = {}, retry = true): Promise<T> {
   const token = await getValidAccessToken()
   const qs = new URLSearchParams()
   Object.entries(params).forEach(([k, v]) => {
@@ -205,7 +218,7 @@ async function dashboardGet(path: string, params: Record<string, string | number
     _accessToken = null // ← invalidate dulu
     try {
       await ensureFreshToken() // ← single-flight, sudah panggil setTokens di dalamnya
-      return dashboardGet(path, params, false) // ← retry
+      return dashboardGet<T>(path, params, false) // ← retry
     } catch {
       clearTokens()
       _emitError(401, 'Sesi habis, silakan login kembali.', path)
@@ -223,7 +236,7 @@ async function dashboardGet(path: string, params: Record<string, string | number
     throw new Error(`API ${res.status}: ${path}`)
   }
 
-  return res.json()
+  return res.json() as Promise<T>
 }
 
 
@@ -318,14 +331,14 @@ async function _streamRequest(
  * POST /v1/login
  * Login dengan token site, mendapatkan accessToken & refreshToken
  */
-export async function login(token: string) {
+export async function login(token: string): Promise<LoginApiResponse> {
   const res = await fetch(`${BASE_DASHBOARD}/v1/login`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({ token }),
   })
   if (!res.ok) throw new Error(`Login failed: ${res.status}`)
-  const data = await res.json()
+  const data = await res.json() as LoginApiResponse
 
   if (data?.success && data?.data?.tokens) {
     setTokens(data.data.tokens.accessToken, data.data.tokens.refreshToken)
@@ -349,8 +362,8 @@ export async function fetchLoncengWithLink(params: {
   lastid?: number
   news?: number
   newsChannel?: number
-}) {
-  return dashboardPost('v1/getStikernews', {
+}): Promise<LoncengItem[] | LoncengApiResponse> {
+  return dashboardPost<LoncengItem[] | LoncengApiResponse>('v1/getStikernews', {
     id_user: params.id_user,
     jenis: params.jenis ?? 2,
     lastid: params.lastid ?? 0,
@@ -410,8 +423,8 @@ export async function fetchAnalytics(params: {
   limit?: number
   start_date?: string
   end_date?: string
-}) {
-  return getQuery(BASE_PROD, 'Get_Stikernews_Analytics', {
+}): Promise<AnalyticsItem[] | ApiEnvelope<AnalyticsItem[]>> {
+  return getQuery<AnalyticsItem[] | ApiEnvelope<AnalyticsItem[]>>(BASE_PROD, 'Get_Stikernews_Analytics', {
     id_user: params.id_user,
     id_stikernews: params.id_stikernews,
     id_channel: params.id_channel ?? 7,
@@ -423,56 +436,56 @@ export async function fetchAnalytics(params: {
   })
 }
 
-export async function fetchChannels(id_user?: number) {
-  return getQuery(BASE_BETA, 'getChannelStikerNews', id_user ? { id_user } : {})
+export async function fetchChannels(id_user?: number): Promise<Channel[] | ApiEnvelope<Channel[]>> {
+  return getQuery<Channel[] | ApiEnvelope<Channel[]>>(BASE_BETA, 'getChannelStikerNews', id_user ? { id_user } : {})
 }
 
-export async function fetchSetting(userid: number) {
-  return getQuery(BASE_BETA, 'Get_Setting_Stikernews', { userid })
+export async function fetchSetting(userid: number): Promise<Partial<StikerNewsSetting> | null> {
+  return getQuery<Partial<StikerNewsSetting> | null>(BASE_BETA, 'Get_Setting_Stikernews', { userid })
 }
 
 export async function saveSetting(params: {
   userid: number
   auto_play: 0 | 1
   play_mode: 0 | 1
-}) {
-  return postForm(BASE_BETA, 'Save_Setting_Stikernews', {
+}): Promise<ApiEnvelope> {
+  return postForm<ApiEnvelope>(BASE_BETA, 'Save_Setting_Stikernews', {
     userid: params.userid,
     auto_play: params.auto_play,
     play_mode: params.play_mode,
   })
 }
 
-export async function scanUniqId(uniqId: string, accessToken?: string) {
-  return dashboardPost('v1/scan-uniq-id', {
+export async function scanUniqId(uniqId: string, _accessToken?: string): Promise<ApiEnvelope<ScanUniqIdData>> {
+  return dashboardPost<ApiEnvelope<ScanUniqIdData>>('v1/scan-uniq-id', {
     uniq_id: uniqId,
   })
 }
 
-export async function apiFavoriteItems(userId: string, accessToken?: string) {
-  return dashboardPost('v1/Show_Favorite_List', {
+export async function apiFavoriteItems(userId: string, _accessToken?: string): Promise<LoncengItem[] | ApiEnvelope<LoncengItem[]>> {
+  return dashboardPost<LoncengItem[] | ApiEnvelope<LoncengItem[]>>('v1/Show_Favorite_List', {
     user_id: userId,
   })
 }
 
-export async function apiPlaylistItems(userId: string, accessToken?: string) {
-  return dashboardPost('v1/Show_Playlists', {
+export async function apiPlaylistItems(userId: string, _accessToken?: string): Promise<PlaylistItem[] | ApiEnvelope<PlaylistItem[]>> {
+  return dashboardPost<PlaylistItem[] | ApiEnvelope<PlaylistItem[]>>('v1/Show_Playlists', {
     user_id: userId,
   })
 }
 
-export async function apiDetailPlaylistItems(playlistId: string, accessToken?: string) {
-  return dashboardPost('v1/Show_Playlist', {
+export async function apiDetailPlaylistItems(playlistId: string, _accessToken?: string): Promise<LoncengItem[] | ApiEnvelope<LoncengItem[]>> {
+  return dashboardPost<LoncengItem[] | ApiEnvelope<LoncengItem[]>>('v1/Show_Playlist', {
     playlist_id: playlistId,
   })
 }
 
-export async function apiProv() {
-  return dashboardGet('trial/prov')
+export async function apiProv(): Promise<ApiEnvelope<ProvinsiItem[]>> {
+  return dashboardGet<ApiEnvelope<ProvinsiItem[]>>('trial/prov')
 }
 
-export async function apiKab(idProv: string | number) {
-  return dashboardGet(`trial/kab?id_prov=${idProv}`)
+export async function apiKab(idProv: string | number): Promise<ApiEnvelope<KabupatenItem[]>> {
+  return dashboardGet<ApiEnvelope<KabupatenItem[]>>(`trial/kab?id_prov=${idProv}`)
 }
 
 export async function apiFormTrial(data: {
@@ -487,8 +500,8 @@ export async function apiFormTrial(data: {
   jumlah_smartboard: string | number
   pakai_smart_tv: string | number
   pakai_ac: string | number
-}) {
-  return dashboardPost(`trial/submit`, {
+}): Promise<ApiEnvelope> {
+  return dashboardPost<ApiEnvelope>(`trial/submit`, {
     nama_sekolah: data.nama_sekolah,
     nama_pengisi: data.nama_pengisi,
     nomor_wa: data.nomor_wa,
@@ -503,8 +516,8 @@ export async function apiFormTrial(data: {
   })
 }
 
-export async function apiVersion() {
-  return dashboardGet(`version`)
+export async function apiVersion(): Promise<ApiEnvelope> {
+  return dashboardGet<ApiEnvelope>(`version`)
 }
 
 export async function apiSummerizeStream(
@@ -529,8 +542,8 @@ export async function apiListening(data: {
   listening_start_time: string
   listening_stop_time: string
   listening_text: string
-}) {
-  return dashboardPost(`v1/save-listening`, {
+}): Promise<ApiEnvelope> {
+  return dashboardPost<ApiEnvelope>(`v1/save-listening`, {
     session_id: data.session_id,
     listening_start_time: data.listening_start_time,
     listening_stop_time: data.listening_stop_time,
@@ -541,8 +554,8 @@ export async function apiListening(data: {
 export async function apiEvaluate(data: {
   session_id: string
   teacher_note: string
-}) {
-  return dashboardPost(`v1/evaluate-class`, {
+}): Promise<ApiEnvelope> {
+  return dashboardPost<ApiEnvelope>(`v1/evaluate-class`, {
     session_id: data.session_id,
     teacher_note: data.teacher_note,
   })
@@ -552,8 +565,8 @@ export async function apiReqUrlUploadImg(data: {
   session_id: string
   file_type: string
   file_name: string
-}) {
-  return dashboardPost(`v1/generate-upload-url`, {
+}): Promise<ApiEnvelope<{ upload_url: string; final_image_url: string }>> {
+  return dashboardPost<ApiEnvelope<{ upload_url: string; final_image_url: string }>>(`v1/generate-upload-url`, {
     session_id: data.session_id,
     file_type: data.file_type,
     file_name: data.file_name,
@@ -564,8 +577,8 @@ export async function apiStopClass(data: {
   session_id: string
   student_counting: number
   stop_class_image: string
-}) {
-  return dashboardPost(`v1/stop-class`, {
+}): Promise<ApiEnvelope> {
+  return dashboardPost<ApiEnvelope>(`v1/stop-class`, {
     session_id: data.session_id,
     student_counting: data.student_counting,
     stop_class_image: data.stop_class_image,
@@ -605,8 +618,8 @@ export async function apiReportKonten(data: {
   sekolah: string
   tingkat: string
   alasan: string
-}) {
-  return dashboardPost('v1/report-content', { ...data })
+}): Promise<ApiEnvelope> {
+  return dashboardPost<ApiEnvelope>('v1/report-content', { ...data })
 }
 
 export async function apiRequestKonten(data: {
@@ -625,8 +638,8 @@ export async function apiRequestKonten(data: {
   tujuan_pembelajaran: string
   link_referensi?: string
   alasan_penting: string
-}) {
-  return dashboardPost('v1/request-content', { ...data })
+}): Promise<ApiEnvelope> {
+  return dashboardPost<ApiEnvelope>('v1/request-content', { ...data })
 }
 
 export function clearTokenCache() {
