@@ -1668,7 +1668,7 @@ async function submitEndClass() {
   const data = result?.data ?? result
 
   sessionScore.value = Number(data?.skor ?? data?.score ?? 0)
-  sessionScoreReason.value = data?.evaluasi ?? data?.reason ?? data?.feedback ?? data?.alasan ?? ''
+  sessionScoreReason.value = String(data?.evaluasi ?? data?.reason ?? data?.feedback ?? data?.alasan ?? '')
 
   showEndClassPopup.value = false
   unlockNext('endclass')

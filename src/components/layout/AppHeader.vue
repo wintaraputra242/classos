@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import { ref, computed, onMounted, onUnmounted } from 'vue'
-import { RouterLink, useRoute, useRouter } from 'vue-router'
+import { useRoute, useRouter } from 'vue-router'
 import { useThemeStore } from '@/stores/theme'
 import { useAuthStore } from '@/stores/auth'
 import { useAppStore } from '@/stores/app'
@@ -26,13 +26,12 @@ onUnmounted(() => clearInterval(timer))
 const formattedDate = computed(() => formatDate(now.value))
 const formattedTime = computed(() => formatTime(now.value))
 
-function isActive(to: string) {
-  if (to === '/') return route.path === '/'
-  return route.path.startsWith(to)
+// Declare agar TypeScript tidak error — lib eksternal tanpa tipe (dimuat lewat <script> tag)
+interface ResponsiveVoice {
+  cancel: () => void
+  speak: (text: string, voice: string, options?: { rate?: number; pitch?: number; volume?: number }) => void
 }
-
-// Declare agar TypeScript tidak error
-declare const responsiveVoice: any
+declare const responsiveVoice: ResponsiveVoice | undefined
 
 function speak(text: string) {
   // Fallback ke responsiveVoice kalau speechSynthesis tidak support
@@ -66,14 +65,6 @@ function logout() {
   // }, 1200)
 }
 
-const menuItems = [
-  { to: '/', label: 'Beranda' },
-  { to: '/stikernews', label: 'StikerNews' },
-  { to: '/lagu', label: 'Lagu Edukasi' },
-  { to: '/karakter', label: 'Karakter & Habit' },
-  { to: '/favorite', label: 'Favorit' },
-]
-
 const userMenuRef = ref<HTMLElement | null>(null)
 
 function handleOutsideClick(e: MouseEvent) {
@@ -83,9 +74,15 @@ function handleOutsideClick(e: MouseEvent) {
 }
 const isFocused = ref(false)
 const activeIdx = ref(-1)
-const inputRef = ref(null)
+const inputRef = ref<HTMLInputElement | null>(null)
 
-const suggestions = [
+interface SearchSuggestion {
+  label: string
+  icon: string
+  cat: string
+}
+
+const suggestions: SearchSuggestion[] = [
   { label: 'Panduan Memulai', icon: 'ti-file-text', cat: 'Artikel' },
   { label: 'Tutorial Video React', icon: 'ti-brand-react', cat: 'Video' },
   { label: 'Konfigurasi Tailwind CSS', icon: 'ti-paint', cat: 'Artikel' },
@@ -102,22 +99,25 @@ const filtered = computed(() => {
 
 const isOpen = computed(() => isFocused.value && filtered.value.length > 0)
 
-function highlight(text: any) {
+function highlight(text: string) {
   const q = appStore.searchQuery.trim()
   if (!q) return text
   const re = new RegExp(`(${q.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')})`, 'gi')
   return text.replace(re, '<mark class="bg-transparent text-brand-green font-medium">$1</mark>')
 }
 
-function select(item: any) {
+function select(item: SearchSuggestion) {
   appStore.searchQuery = item.label
   isFocused.value = false
 }
 
-function onKeydown(e: any) {
+function onKeydown(e: KeyboardEvent) {
   if (e.key === 'ArrowDown') { e.preventDefault(); activeIdx.value = Math.min(activeIdx.value + 1, filtered.value.length - 1) }
   else if (e.key === 'ArrowUp') { e.preventDefault(); activeIdx.value = Math.max(activeIdx.value - 1, -1) }
-  else if (e.key === 'Enter' && activeIdx.value >= 0) { select(filtered.value[activeIdx.value]) }
+  else if (e.key === 'Enter' && activeIdx.value >= 0) {
+    const item = filtered.value[activeIdx.value]
+    if (item) select(item)
+  }
   else if (e.key === 'Escape') { isFocused.value = false }
 }
 
@@ -184,7 +184,7 @@ onUnmounted(() => document.removeEventListener('click', handleOutsideClick))
 
           <button v-if="appStore.searchQuery"
             class="flex-shrink-0 text-gray-400 hover:text-gray-600 dark:hover:text-gray-300 transition-colors"
-            @click="appStore.searchQuery = ''; (inputRef as any)?.focus()">
+            @click="appStore.searchQuery = ''; inputRef?.focus()">
             <svg class="w-3 h-3" fill="none" stroke="currentColor" viewBox="0 0 24 24">
               <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2.5" d="M6 18L18 6M6 6l12 12" />
             </svg>

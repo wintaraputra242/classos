@@ -516,8 +516,8 @@ export async function apiFormTrial(data: {
   })
 }
 
-export async function apiVersion(): Promise<ApiEnvelope> {
-  return dashboardGet<ApiEnvelope>(`version`)
+export async function apiVersion(): Promise<string | { version: string; releaseDate?: string }> {
+  return dashboardGet<string | { version: string; releaseDate?: string }>(`version`)
 }
 
 export async function apiSummerizeStream(
@@ -551,11 +551,13 @@ export async function apiListening(data: {
   })
 }
 
+// ⚠️ Field skor/evaluasi belum dikonfirmasi backend — nama field masih bisa berubah,
+// makanya dibiarkan longgar (bukan interface ketat) & consumer probe beberapa nama alias.
 export async function apiEvaluate(data: {
   session_id: string
   teacher_note: string
-}): Promise<ApiEnvelope> {
-  return dashboardPost<ApiEnvelope>(`v1/evaluate-class`, {
+}): Promise<ApiEnvelope<Record<string, unknown>>> {
+  return dashboardPost<ApiEnvelope<Record<string, unknown>>>(`v1/evaluate-class`, {
     session_id: data.session_id,
     teacher_note: data.teacher_note,
   })

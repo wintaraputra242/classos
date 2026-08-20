@@ -275,15 +275,4 @@ function formatTime(secs: number): string {
       </div>
     </div>
   </div>
-
-  <div v-else-if="contentStore.loading" class="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-4 gap-3 mt-4">
-    <div v-for="i in 8" :key="i"
-      class="dark:bg-[#1e1e1e] bg-white rounded-xl overflow-hidden border dark:border-gray-800 border-gray-100 animate-pulse">
-      <div class="aspect-video dark:bg-gray-700 bg-gray-200" />
-      <div class="p-2.5 space-y-1.5">
-        <div class="h-3 dark:bg-gray-700 bg-gray-200 rounded" />
-        <div class="h-2 w-2/3 dark:bg-gray-700 bg-gray-200 rounded" />
-      </div>
-    </div>
-  </div>
 </template>

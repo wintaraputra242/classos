@@ -5,9 +5,7 @@ import { useContentStore } from '@/stores/content'
 import { usePlayerStore } from '@/stores/player'
 import { useAuthStore } from '@/stores/auth'
 import { useContent } from '@/composables/useContent'
-import { stikerNewsData, getTodayItems } from '@/data/mockData'
-import type { Content, Jenjang, PlayerTrack } from '@/types'
-import { useThemeStore } from '@/stores/theme'
+import type { LoncengItem, PlayerTrack } from '@/types'
 import { useAppStore } from '@/stores/app'
 // ✅ Import TrackDetailPopup sama seperti beranda
 import TrackDetailPopup from '@/components/ui/TrackDetailPopup.vue'
@@ -21,19 +19,24 @@ const playerStore = usePlayerStore()
 const appStore = useAppStore()
 const auth = useAuthStore()
 useContent()
-const themeStore = useThemeStore()
 
 const showTrackPopup = ref(false)
 const showRequestModal = ref(false)
 
-const jenjangList: any = [
+interface JenjangFilter {
+  label: string
+  color: string
+  channelId: number
+}
+
+const jenjangList: JenjangFilter[] = [
   { label: 'SD', color: 'bg-yellow-500', channelId: 7 },
   { label: 'SMP', color: 'bg-blue-500', channelId: 8 },
   { label: 'SMA', color: 'bg-purple-600', channelId: 9 },
   { label: 'SMK', color: 'bg-red-500', channelId: 10 },
 ]
 
-const activeFilter = ref<{ label: string; channelId: number }>(jenjangList[0])
+const activeFilter = ref<JenjangFilter>(jenjangList[0]!)
 
 const loaderRef = ref<HTMLElement | null>(null)
 const isLoadingMore = ref(false)
@@ -56,8 +59,8 @@ function setupObserver() {
   if (!loaderRef.value) return
 
   _observer = new IntersectionObserver(
-    (entries: any) => {
-      if (entries[0].isIntersecting) loadMore()
+    (entries) => {
+      if (entries[0]?.isIntersecting) loadMore()
     },
     { threshold: 0.1, rootMargin: '100px' }
   )
@@ -80,17 +83,17 @@ watch(
   }
 )
 
-async function switchFilter(item: typeof jenjangList[0]) {
+async function switchFilter(item: JenjangFilter) {
   activeFilter.value = item
   await contentStore.loadContent(auth.userId, item.channelId, true)
   await nextTick()
   setupObserver()
 }
 
-const filteredBySearch = (items: any[]) => {
+const filteredBySearch = (items: LoncengItem[]) => {
   if (!searchQuery.value.trim()) return items
   const q = searchQuery.value.toLowerCase()
-  return items.filter((item: any) =>
+  return items.filter((item) =>
     item.judul?.toLowerCase().includes(q) ||
     item.isi?.toLowerCase().includes(q)
   )
@@ -105,25 +108,25 @@ async function switchChannel(channelId: number) {
   setupObserver()
 }
 
-const channelItems: any = {
+const channelItems: Record<number, string> = {
   7: "SD", 8: "SMP", 9: "SMA", 10: "SMK",
 }
 
-function mapToPlayerTrack(item: any): PlayerTrack {
+function mapToPlayerTrack(item: LoncengItem): PlayerTrack {
   return {
     id: String(item.id_lonceng),
     id_stikernews: item.id_lonceng,
     id_channel: item.channel,
     title: item.judul,
-    channel_name: channelItems[item.channel],
-    subtitle: (item.isi as string)?.slice(0, 60) + '...' || '',
+    channel_name: channelItems[item.channel] ?? '',
+    subtitle: (item.isi ?? '').slice(0, 60) + '...',
     emoji: '🎧',
-    duration: item.durasi,
-    duration_podcast: item.podcast_durasi,
-    audio_url: item.audio_url,
-    podcast_url: item.podcast_url,
-    image_url: item.gambar_url,
-    isi: item.isi,
+    duration: item.durasi ?? '',
+    duration_podcast: item.podcast_durasi ?? '',
+    audio_url: item.audio_url ?? '',
+    podcast_url: item.podcast_url ?? '',
+    image_url: item.gambar_url ?? '',
+    isi: item.isi ?? '',
     currentTime: 0,
     isPlaying: false,
     isFavorite: false,
@@ -132,12 +135,12 @@ function mapToPlayerTrack(item: any): PlayerTrack {
 }
 
 // ✅ Play dari section terbaru — sama persis dengan beranda
-function playNew(item: any) {
+function playNew(item: LoncengItem) {
   if (!item?.audio_url && !item?.podcast_url) return
 
   const track = mapToPlayerTrack(item)
   const queueTracks = displayToday.value
-    ?.filter((i: any) => i?.audio_url || i?.podcast_url)
+    ?.filter((i) => i?.audio_url || i?.podcast_url)
     .map(mapToPlayerTrack)
 
   playerStore.queueListName = 'StikerNews Terbaru'
@@ -145,12 +148,12 @@ function playNew(item: any) {
 }
 
 // ✅ Play dari section semua konten
-function playAll(item: any) {
+function playAll(item: LoncengItem) {
   if (!item?.audio_url && !item?.podcast_url) return
 
   const track = mapToPlayerTrack(item)
   const queueTracks = displayAll.value
-    ?.filter((i: any) => i?.audio_url || i?.podcast_url)
+    ?.filter((i) => i?.audio_url || i?.podcast_url)
     .map(mapToPlayerTrack)
 
   playerStore.queueListName = 'StikerNews Semua'
@@ -158,12 +161,12 @@ function playAll(item: any) {
 }
 
 // ✅ Handle klik detail — sama persis dengan beranda
-function handleClickDetail(item: any, sourceItems: any[]) {
+function handleClickDetail(item: LoncengItem, sourceItems: LoncengItem[]) {
   showTrackPopup.value = true
 
   const track = mapToPlayerTrack(item)
   const queueTracks = sourceItems
-    ?.filter((i: any) => i?.audio_url || i?.podcast_url)
+    ?.filter((i) => i?.audio_url || i?.podcast_url)
     .map(mapToPlayerTrack)
 
   // Kalau track yang di-preview sama dengan yang sedang diplay, tidak masuk preview mode

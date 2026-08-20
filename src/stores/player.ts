@@ -571,7 +571,7 @@ export const usePlayerStore = defineStore('player', () => {
   const hasNext = computed(() => queue.value.length > 0 && queueIndex.value < queue.value.length - 1)
   const hasPrev = computed(() => queue.value.length > 0 && queueIndex.value > 0)
 
-  function setItemPlay(track: PlayerTrack, tracks?: any[]) {
+  function setItemPlay(track: PlayerTrack, tracks?: PlayerTrack[]) {
     previewTrack.value = { ...track }
     previewQueue.value = tracks ?? []
 

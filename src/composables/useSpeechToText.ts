@@ -2,11 +2,37 @@
 // satu instance recognition dibagi ke banyak field, hanya 1 field aktif dalam satu waktu.
 import { ref } from 'vue'
 
+// Web Speech API — belum standar di semua browser, TS DOM lib tidak selalu menyediakan tipenya.
+interface SpeechRecognitionResultLike {
+  isFinal: boolean
+  [index: number]: { transcript: string }
+}
+interface SpeechRecognitionEventLike {
+  resultIndex: number
+  results: { length: number; [index: number]: SpeechRecognitionResultLike }
+}
+interface SpeechRecognitionLike {
+  lang: string
+  continuous: boolean
+  interimResults: boolean
+  onresult: ((event: SpeechRecognitionEventLike) => void) | null
+  onerror: ((event: { error: string }) => void) | null
+  onend: (() => void) | null
+  start: () => void
+  stop: () => void
+}
+type SpeechRecognitionCtor = new () => SpeechRecognitionLike
+
+function getSpeechRecognitionCtor(): SpeechRecognitionCtor | undefined {
+  const w = window as unknown as { SpeechRecognition?: SpeechRecognitionCtor; webkitSpeechRecognition?: SpeechRecognitionCtor }
+  return w.SpeechRecognition || w.webkitSpeechRecognition
+}
+
 export function useSpeechToText() {
   const activeField = ref<string | null>(null)
-  const isSupported = !!((window as any).SpeechRecognition || (window as any).webkitSpeechRecognition)
+  const isSupported = !!getSpeechRecognitionCtor()
 
-  let recognition: any = null
+  let recognition: SpeechRecognitionLike | null = null
 
   function stop() {
     recognition?.stop()
@@ -15,28 +41,30 @@ export function useSpeechToText() {
   }
 
   function start(field: string, onFinalText: (text: string) => void) {
-    const SpeechRecognition = (window as any).SpeechRecognition || (window as any).webkitSpeechRecognition
-    if (!SpeechRecognition) {
+    const SpeechRecognitionCtor = getSpeechRecognitionCtor()
+    if (!SpeechRecognitionCtor) {
       console.warn('[STT] SpeechRecognition tidak tersedia')
       return
     }
 
     if (recognition) stop()
 
-    recognition = new SpeechRecognition()
+    recognition = new SpeechRecognitionCtor()
     recognition.lang = 'id-ID'
     recognition.continuous = true
     recognition.interimResults = false
 
-    recognition.onresult = (event: any) => {
+    recognition.onresult = (event) => {
       for (let i = event.resultIndex; i < event.results.length; i++) {
-        if (event.results[i].isFinal) {
-          onFinalText(event.results[i][0].transcript.trim())
+        const result = event.results[i]
+        const transcript = result?.[0]?.transcript
+        if (result?.isFinal && transcript) {
+          onFinalText(transcript.trim())
         }
       }
     }
 
-    recognition.onerror = (e: any) => {
+    recognition.onerror = (e) => {
       console.warn('[STT] error:', e.error)
       stop()
     }

@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { ref, computed, onMounted } from 'vue'
+import { computed } from 'vue'
 
 const props = defineProps<{
   modelValue: boolean
@@ -39,12 +39,6 @@ const scoreColor = computed(() => {
   return { text: 'text-red-400', bg: 'bg-red-400', ring: 'ring-red-400/30' }
 })
 
-const scoreLabel = computed(() => {
-  const s = props.animatedScoreDisplay
-  if (s >= 80) return 'Sangat Baik'
-  if (s >= 60) return 'Cukup Baik'
-  return 'Perlu Ditingkatkan'
-})
 </script>
 
 <template>

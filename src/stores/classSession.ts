@@ -9,6 +9,7 @@ import {
   apiUploadImage,
   apiStopClass,
 } from '@/services/api'
+import type { ApiEnvelope } from '@/types'
 
 const SESSION_STATE_KEY = 'classos_session_state'
 
@@ -24,7 +25,7 @@ function _initStreamState(): StreamState {
 }
 
 // ✅ Helper: selalu baca ulang localStorage TERBARU, jangan simpan ke variable/const
-function _patchSessionState(patch: Record<string, any>) {
+function _patchSessionState(patch: Record<string, unknown>) {
   try {
     const current = localStorage.getItem(SESSION_STATE_KEY)
     const parsed = current ? JSON.parse(current) : {}
@@ -179,7 +180,7 @@ export const useClassSessionStore = defineStore('classSession', () => {
   }
 
   // ── Listening (non-streaming) ─────────────────────────────
-  const listening = ref({ loading: false, error: null as string | null, result: null as any })
+  const listening = ref({ loading: false, error: null as string | null, result: null as ApiEnvelope | null })
 
   async function saveListening(payload: {
     listening_start_time: string
@@ -202,7 +203,7 @@ export const useClassSessionStore = defineStore('classSession', () => {
   }
 
   // ── Evaluate (non-streaming) ──────────────────────────────
-  const evaluate = ref({ loading: false, error: null as string | null, result: null as any })
+  const evaluate = ref({ loading: false, error: null as string | null, result: null as ApiEnvelope<Record<string, unknown>> | null })
 
   async function evaluateClass(teacherNote: string) {
     if (!sessionId.value) {
@@ -240,7 +241,7 @@ export const useClassSessionStore = defineStore('classSession', () => {
   const stopClassState = ref({
     loading: false,
     error: null as string | null,
-    result: null as any,
+    result: null as ApiEnvelope | null,
     finalImageUrl: null as string | null,
   })
 

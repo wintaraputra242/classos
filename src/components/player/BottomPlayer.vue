@@ -12,11 +12,7 @@ const emit = defineEmits<{
 }>()
 
 const playerStore = usePlayerStore()
-const currentTrack = computed(() => {
-  console.log(playerStore.currentTrack);
-
-  return playerStore.currentTrack
-})
+const currentTrack = computed(() => playerStore.currentTrack)
 
 const showTrackPopup = ref(false)
 
@@ -60,60 +56,6 @@ function seek(e: MouseEvent) {
     setTimeout(() => { isSeeking.value = false }, 50)
   })
 }
-
-// Kompensasi lebar dot agar benar-benar di ujung bar
-const dotPosition = computed(() => {
-  const barWidth = 100 // persen
-  const dotWidthPx = 12 // w-3 = 12px
-  // Tidak bisa hitung pixel langsung, pakai pendekatan CSS
-  return `calc(${progressPercent.value}% - ${(progressPercent.value / 100) * dotWidthPx}px - 5px)`
-})
-
-function toggleFavorite() {
-  if (currentTrack.value) {
-    currentTrack.value.isFavorite = !currentTrack.value.isFavorite
-  }
-}
-
-const channelItems: any = {
-  7: "SD",
-  8: "SMP",
-  9: "SMA",
-  10: "SMK",
-}
-
-const jenjangList: { label: string; color: string }[] = [
-  { label: 'SD', color: 'bg-yellow-500' },
-  { label: 'SMP', color: 'bg-blue-500' },
-  { label: 'SMA', color: 'bg-purple-600' },
-  { label: 'SMK', color: 'bg-red-500' },
-]
-
-// Pecah isi jadi array kata
-const isiWords = computed(() => {
-  const isi = (currentTrack.value as any)?.isi
-  if (!isi) return []
-  return isi.split(/\s+/)
-})
-
-
-// Durasi audio dalam detik (parse dari "MM:SS")
-const audioDurationSeconds = computed(() => {
-  if (playerStore.isPlayingPodcast) return
-  const durasi = currentTrack.value?.duration ?? '00:00'
-  const [mins, secs]: any = durasi.split(':').map(Number)
-  return (mins * 60) + secs
-})
-
-// Index kata yang sedang aktif berdasarkan currentTime
-const currentWordIndex = computed(() => {
-  if (playerStore.isPlayingPodcast) return
-  const total = audioDurationSeconds.value
-  if (!total || !isiWords.value.length) return -1
-
-  const progress = playerStore.currentTime / total
-  return Math.floor(progress * isiWords.value.length)
-})
 
 function openPlayerDetail() {
   // ✅ Reset preview state agar popup tampilkan track yang sedang diplay

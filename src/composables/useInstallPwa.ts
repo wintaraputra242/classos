@@ -1,14 +1,20 @@
 // src/composables/useInstallPwa.ts
 import { ref, onMounted, onUnmounted } from 'vue'
 
-const deferredPrompt = ref<any>(null)
+/** Event non-standar (belum di DOM lib TS) yang di-fire browser sebelum menampilkan prompt install PWA */
+interface BeforeInstallPromptEvent extends Event {
+  prompt: () => void
+  userChoice: Promise<{ outcome: 'accepted' | 'dismissed' }>
+}
+
+const deferredPrompt = ref<BeforeInstallPromptEvent | null>(null)
 const isInstallable = ref(false)
 const isInstalled = ref(false)
 
 export function useInstallPwa() {
   function onBeforeInstall(e: Event) {
     e.preventDefault()
-    deferredPrompt.value = e
+    deferredPrompt.value = e as BeforeInstallPromptEvent
     isInstallable.value = true
   }
 

@@ -13,7 +13,7 @@ let checking = false
 
 const releaseDate = ref('')  // ← tambahkan
 
-async function fetchVersion(): Promise<any> {
+async function fetchVersion(): Promise<string | { version: string; releaseDate?: string } | null> {
   try {
     const data = await apiVersion()
     return data ?? null
@@ -27,12 +27,12 @@ export async function checkVersion() {
   checking = true
 
   try {
-    const res: any = await fetchVersion()
+    const res = await fetchVersion()
     if (!res) return
 
     // Sesuaikan dengan struktur response API Anda
     const latest = typeof res === 'string' ? res : res.version
-    const date = typeof res === 'string' ? '' : res.releaseDate
+    const date = typeof res === 'string' ? '' : (res.releaseDate ?? '')
 
     const saved = localStorage.getItem(VERSION_KEY)
 
