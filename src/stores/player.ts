@@ -27,7 +27,7 @@ export const usePlayerStore = defineStore('player', () => {
   const _onQueuePageChange = ref<((path: string, query?: Record<string, string>) => void) | null>(null)
   const _audio = new Audio()
 
-  function setNavigationCallback(cb: (path: string, query?: Record<string, string>) => void) {
+  function setNavigationCallback(cb: ((path: string, query?: Record<string, string>) => void) | null) {
     _onQueuePageChange.value = cb
   }
 

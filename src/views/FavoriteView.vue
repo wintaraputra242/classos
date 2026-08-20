@@ -1,12 +1,10 @@
 <script setup lang="ts">
-import { laguEdukasiData } from '@/data/mockData'
-import type { LaguEdukasi, PlayerTrack } from '@/types'
+import type { LoncengItem, PlayerTrack, PlaylistItem } from '@/types'
 import { ref, computed, onMounted, onUnmounted, watch, nextTick } from 'vue'
-import { RouterLink, useRouter } from 'vue-router'
+import { useRouter } from 'vue-router'
 import { usePlayerStore } from '@/stores/player'
 import { useAuthStore } from '@/stores/auth'
 import { useContentStore } from '@/stores/content'
-import jsQR from 'jsqr'
 import TrackDetailPopup from '@/components/ui/TrackDetailPopup.vue'
 import FavoriteSection from '@/components/favorite-history/FavoriteSection.vue'
 import HistorySection from '@/components/favorite-history/HistorySection.vue'
@@ -26,54 +24,23 @@ const tabs = computed(() => [
   { id: 'history', label: '🕐 History Play', count: playerStore.history.length },
 ])
 
-const favoriteLagu = computed(() => laguEdukasiData.filter(l => l.isFavorite))
+const channelItems: Record<number, string> = { 7: 'SD', 8: 'SMP', 9: 'SMA', 10: 'SMK' }
 
-// const tabs = computed(() => [
-//   { id: 'lagu', label: '❤️ Lagu Favorit', count: favoriteLagu.value.length },
-//   { id: 'history', label: '🕐 History Play', count: playerStore.history.length },
-//   { id: 'guru', label: '👩‍🏫 Playlist Guru', count: null },
-// ])
-
-const teacherPlaylists = [
-  { jenjang: 'SD', color: 'bg-yellow-500', tracks: laguEdukasiData.filter(l => l.jenjang.includes('SD')) },
-  { jenjang: 'SMP', color: 'bg-blue-500', tracks: laguEdukasiData.filter(l => l.jenjang.includes('SMP')) },
-  { jenjang: 'SMA', color: 'bg-purple-600', tracks: laguEdukasiData.filter(l => l.jenjang.includes('SMA')) },
-  { jenjang: 'SMK', color: 'bg-red-500', tracks: laguEdukasiData.filter(l => l.jenjang.includes('SMK')) },
-]
-
-// function toggleFav(lagu: LaguEdukasi) {
-//   lagu.isFavorite = !lagu.isFavorite
-// }
-
-const channelItems: any = { 7: 'SD', 8: 'SMP', 9: 'SMA', 10: 'SMK' }
-
-function gradientFor(id: string) {
-  const gradients = [
-    { from: '#1e3a5f', to: '#1a73e8' },
-    { from: '#1a3a2a', to: '#1DB954' },
-    { from: '#5f3a0d', to: '#f59e0b' },
-    { from: '#5f1a1a', to: '#ef4444' },
-    { from: '#3a1a5f', to: '#8b5cf6' },
-  ]
-  const idx = String(id).charCodeAt(String(id).length - 1) % gradients.length
-  return gradients[idx]
-}
-
-function mapToPlayerTrack(item: any): PlayerTrack {
+function mapToPlayerTrack(item: LoncengItem): PlayerTrack {
   return {
     id: String(item.id_lonceng),
     id_stikernews: item.id_lonceng,
     id_channel: item.channel,
     title: item.judul,
-    channel_name: channelItems[item.channel],
-    subtitle: (item.isi as string)?.slice(0, 60) + '...' || '',
+    channel_name: channelItems[item.channel] ?? '',
+    subtitle: (item.isi ?? '').slice(0, 60) + '...',
     emoji: '🎧',
-    duration: item.durasi,
-    duration_podcast: item.podcast_durasi,
-    audio_url: item.audio_url,
-    podcast_url: item.podcast_url,
-    image_url: item.gambar_url,
-    isi: item.isi,
+    duration: item.durasi ?? '',
+    duration_podcast: item.podcast_durasi ?? '',
+    audio_url: item.audio_url ?? '',
+    podcast_url: item.podcast_url ?? '',
+    image_url: item.gambar_url ?? '',
+    isi: item.isi ?? '',
     currentTime: 0,
     isPlaying: false,
     isFavorite: false,
@@ -96,23 +63,6 @@ const cameraError = ref('')
 const videoRef = ref<HTMLVideoElement | null>(null)
 let cameraStream: MediaStream | null = null
 let qrInterval: ReturnType<typeof setInterval> | null = null
-
-const scanTabs = [
-  { label: 'Kamera', value: 'camera' as const, icon: 'ri-camera-line' },
-  { label: 'Kode Manual', value: 'manual' as const, icon: 'ri-keyboard-line' },
-]
-
-function disconnect() {
-  linkedUser.value = null
-  localStorage.removeItem('sn_linked_user')
-
-  contentStore.favoriteItems = []
-  contentStore.playlistItems = []
-  contentStore.detailPlaylistItems = []
-
-  playerStore.history = []
-  localStorage.removeItem('classos_player_history')
-}
 
 
 async function openScanner() {
@@ -247,8 +197,12 @@ async function submitManual() {
   await verifyCode(manualCode.value)
 }
 
-// Declare agar TypeScript tidak error
-declare const responsiveVoice: any
+// Declare agar TypeScript tidak error — lib eksternal tanpa tipe (dimuat lewat <script> tag)
+interface ResponsiveVoice {
+  cancel: () => void
+  speak: (text: string, voice: string, options?: { rate?: number; pitch?: number; volume?: number }) => void
+}
+declare const responsiveVoice: ResponsiveVoice | undefined
 
 function speak(text: string) {
   // Fallback ke responsiveVoice kalau speechSynthesis tidak support
@@ -345,11 +299,12 @@ watch(scanMode, (val) => {
 const activeMenuTab = ref<'favorit' | 'playlist'>('favorit')
 const loadedTabs = ref<Set<string>>(new Set())
 
-const favoriteItems = computed<any[]>(() => contentStore.favoriteItems ?? [])
-const playlistItems = computed<any[]>(() => contentStore.playlistItems ?? [])
+const favoriteItems = computed<LoncengItem[]>(() => contentStore.favoriteItems ?? [])
 
-const currentMenuItems = computed(() =>
-  activeMenuTab.value === 'favorit' ? favoriteItems.value : playlistItems.value
+// Cuma dibaca oleh FavoriteSection saat activeMenuTab === 'favorit' (tab 'playlist'
+// render dari contentStore.playlistItems langsung) — makanya boleh selalu LoncengItem[].
+const currentMenuItems = computed<LoncengItem[]>(() =>
+  activeMenuTab.value === 'favorit' ? favoriteItems.value : []
 )
 
 watch(activeMenuTab, async (tab) => {
@@ -378,48 +333,31 @@ async function refreshCurrentTab() {
   }
 }
 
-function playMenuItem(item: any) {
+function playMenuItem(item: LoncengItem) {
   if (!item?.audio_url && !item?.podcast_url) return
   const track = mapToPlayerTrack(item)
   const queueTracks = currentMenuItems.value
-    ?.filter((i: any) => i?.audio_url || i?.podcast_url)
+    ?.filter((i) => i?.audio_url || i?.podcast_url)
     .map(mapToPlayerTrack)
 
   playerStore.queueListName = 'Favorit & Playlist Saya'
   playerStore.playWithQueue(track, queueTracks)
 }
 
-function playPlaylistItem(item: any) {
+function playPlaylistItem(item: LoncengItem) {
   if (!item?.audio_url && !item?.podcast_url) return
   const track = mapToPlayerTrack(item)
   const queueTracks = contentStore.detailPlaylistItems
-    ?.filter((i: any) => i?.audio_url || i?.podcast_url)
+    ?.filter((i) => i?.audio_url || i?.podcast_url)
     .map(mapToPlayerTrack)
 
   playerStore.queueListName = 'Favorit & Playlist Saya'
   playerStore.playWithQueue(track, queueTracks)
 }
 
-function playHistoryItem(item: any) {
-  if (!item?.audio_url && !item?.podcast_url) return
-  const track = mapToPlayerTrack(item)
-  const queueTracks = playerStore.history
-    ?.filter((i: any) => i?.audio_url || i?.podcast_url)
-    .map(mapToPlayerTrack)
+const selectedPlaylist = ref<PlaylistItem | null>(null)
 
-  playerStore.queueListName = 'Favorit & Playlist Saya'
-  playerStore.playWithQueue(track, queueTracks)
-}
-
-const selectedPlaylist = ref<null | {
-  id: number
-  name: string
-  content_count: number
-  thumbnail_url?: string
-  thumbnail_title?: string
-}>(null)
-
-async function openPlaylistDetail(playlist: typeof selectedPlaylist.value) {
+async function openPlaylistDetail(playlist: PlaylistItem | null) {
   selectedPlaylist.value = playlist
   await contentStore.loadDetailPlaylistContent(String(playlist!.id))
 }
@@ -451,8 +389,8 @@ const showConfirmGanti = ref(false)
 function confirmGantiAkun() {
   showConfirmGanti.value = false
 
-  if (typeof (window as any).responsiveVoice !== 'undefined') {
-    (window as any).responsiveVoice.cancel()
+  if (typeof responsiveVoice !== 'undefined') {
+    responsiveVoice.cancel()
   } else {
     window.speechSynthesis?.cancel()
   }
@@ -498,23 +436,23 @@ async function closeVerifyErrorModal(mode?: 'camera' | 'manual') {
 
 const showTrackPopup = ref(false)
 
-const handleClickDetailMenuItem = (item: any) => {
+const handleClickDetailMenuItem = (item: LoncengItem) => {
   showTrackPopup.value = true
 
   const track = mapToPlayerTrack(item)
   const queueTracks = currentMenuItems.value
-    ?.filter((i: any) => i?.audio_url || i?.podcast_url)
+    ?.filter((i) => i?.audio_url || i?.podcast_url)
     .map(mapToPlayerTrack)
 
   playerStore.setItemPlay(track, queueTracks)
 }
 
-const handleClickDetailPlaylistItem = (item: any) => {
+const handleClickDetailPlaylistItem = (item: LoncengItem) => {
   showTrackPopup.value = true
 
   const track = mapToPlayerTrack(item)
   const queueTracks = contentStore.detailPlaylistItems
-    ?.filter((i: any) => i?.audio_url || i?.podcast_url)
+    ?.filter((i) => i?.audio_url || i?.podcast_url)
     .map(mapToPlayerTrack)
 
   playerStore.setItemPlay(track, queueTracks)
@@ -522,8 +460,8 @@ const handleClickDetailPlaylistItem = (item: any) => {
 
 
 function disconnectTeacher() {
-  if (typeof (window as any).responsiveVoice !== 'undefined') {
-    (window as any).responsiveVoice.cancel()
+  if (typeof responsiveVoice !== 'undefined') {
+    responsiveVoice.cancel()
   } else {
     window.speechSynthesis?.cancel()
   }
@@ -574,7 +512,7 @@ onMounted(() => {
 
 onUnmounted(() => {
   stopCamera()
-  playerStore.setNavigationCallback(null as any)
+  playerStore.setNavigationCallback(null)
 })
 </script>
 
