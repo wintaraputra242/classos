@@ -2,7 +2,6 @@
 <script setup lang="ts">
 import { computed, nextTick, onMounted, onUnmounted, ref, watch } from 'vue'
 import { usePlayerStore } from '@/stores/player'
-import { useThemeStore } from '@/stores/theme'
 import type { PlayerTrack, ContentQuestion, ContentQuiz } from '@/types';
 import ReportKontenModal from '@/components/ui/ReportKontenModal.vue'
 
@@ -17,8 +16,6 @@ const emit = defineEmits<{
 const playerStore = usePlayerStore()
 
 const activeTab = ref<'insight' | 'podcast'>(playerStore.isPlayingFrom ?? 'insight')
-
-const themeStore = useThemeStore()
 
 const isPreviewMode = computed(() => playerStore.isPreview)
 
@@ -57,8 +54,7 @@ const isToolPanelOpen = computed(() => activeToolPanel.value !== null)
 const speakingKey = ref<string | null>(null)
 
 function stopSpeak() {
-  const rv = (window as any).responsiveVoice
-  if (rv?.cancel) rv.cancel()
+  responsiveVoice?.cancel()
   window.speechSynthesis?.cancel()
   speakingKey.value = null
 }
@@ -74,10 +70,9 @@ function speak(key: string, text: string) {
 
   stopSpeak() // stop suara lain yang mungkin masih jalan
 
-  const rv = (window as any).responsiveVoice
-  if (rv?.speak) {
+  if (responsiveVoice) {
     speakingKey.value = key
-    rv.speak(text, 'Indonesian Female', {
+    responsiveVoice.speak(text, 'Indonesian Female', {
       onend: () => { if (speakingKey.value === key) speakingKey.value = null },
     })
     return
@@ -181,7 +176,7 @@ const displaySlides = computed(() => {
 const displayProject = computed(() => currentTrack.value?.project ?? DUMMY_PROJECT)
 
 const isiWords = computed(() => {
-  const isi = (currentTrack.value as any)?.isi
+  const isi = currentTrack.value?.isi
   if (!isi) return []
   return isi.split(/\s+/)
 })
@@ -189,15 +184,8 @@ const isiWords = computed(() => {
 const audioDurationSeconds = computed(() => {
   if (playerStore.isPlayingPodcast) return
   const durasi = currentTrack.value?.duration ?? '00:00'
-  const [mins, secs]: any = durasi.split(':').map(Number)
-  return (mins * 60) + secs
-})
-
-const audioDurationPodcastSeconds = computed(() => {
-  if (!playerStore.isPlayingPodcast) return
-  const durasi = currentTrack.value?.duration_podcast ?? '00:00'
-  const [mins, secs]: any = durasi.split(':').map(Number)
-  return (mins * 60) + secs
+  const [mins, secs] = durasi.split(':').map(Number)
+  return (mins ?? 0) * 60 + (secs ?? 0)
 })
 
 const lastHighlightedIndex = ref(-1)
@@ -612,11 +600,12 @@ watch(showImagePreview, (val) => {
 
 const currentImageIndex = ref(0)
 
-// Sesuaikan ini dengan struktur data Anda — jika currentTrack punya banyak gambar
+// Sesuaikan ini dengan struktur data Anda — jika currentTrack punya banyak gambar.
+// `images` belum ada di tipe PlayerTrack (belum dikirim backend), makanya dibaca via `unknown`.
 const previewImages = computed<string[]>(() => {
-  const images = (currentTrack.value as any)?.images // contoh: array of { path: string }
+  const images = (currentTrack.value as unknown as { images?: unknown })?.images
   if (Array.isArray(images) && images.length) {
-    return images.map((img: any) => typeof img === 'string' ? img : img.path)
+    return images.map((img: unknown) => typeof img === 'string' ? img : (img as { path: string }).path)
   }
   // fallback ke single image_url
   return currentTrack.value?.image_url ? [currentTrack.value.image_url] : []
@@ -709,18 +698,18 @@ onUnmounted(() => {
               <img v-if="currentTrack?.image_url" :src="currentTrack.image_url" :alt="currentTrack.title"
                 class="w-full h-full object-cover" />
               <div v-else class="w-full h-full min-h-[300px] flex items-center justify-center text-9xl">
-                {{ (currentTrack as any)?.emoji ?? '🎵' }}
+                {{ currentTrack?.emoji ?? '🎵' }}
               </div>
 
               <!-- Tab Toggle: Insight / Podcast -->
               <!-- <div class="absolute bottom-6 left-1/2 -translate-x-1/2 flex gap-2 bg-black/30 rounded-full p-1">
-                <button v-if="(currentTrack as any)?.audio_url" @click="activeTab = 'insight'"
+                <button v-if="currentTrack?.audio_url" @click="activeTab = 'insight'"
                   class="px-5 py-2 rounded-full text-sm font-bold transition-all" :class="activeTab === 'insight'
                     ? 'bg-blue-500 text-white shadow-lg'
                     : 'text-white/70 hover:text-white'">
                   🎧 Insight
                 </button>
-                <button v-if="(currentTrack as any)?.podcast_url" @click="activeTab = 'podcast'"
+                <button v-if="currentTrack?.podcast_url" @click="activeTab = 'podcast'"
                   class="px-5 py-2 rounded-full text-sm font-bold transition-all" :class="activeTab === 'podcast'
                     ? 'bg-green-500 text-white shadow-lg'
                     : 'text-white/70 hover:text-white'">
@@ -744,15 +733,15 @@ onUnmounted(() => {
                   {{ currentTrack?.title }}
                 </h2>
                 <!-- <p class="text-base lg:text-base dark:text-gray-400 text-gray-500 mt-1">
-                  {{ (currentTrack as any)?.channel_name ?? currentTrack?.subtitle ?? '' }}
+                  {{ currentTrack?.channel_name ?? currentTrack?.subtitle ?? '' }}
                 </p> -->
                 <span class="text-base font-semibold px-3 py-1.5 rounded-full" :class="{
-                  'bg-yellow-500/20 text-yellow-300': (currentTrack as any)?.channel_name === 'SD',
-                  'bg-blue-500/20 text-blue-300': (currentTrack as any)?.channel_name === 'SMP',
-                  'bg-purple-600/20 text-purple-300': (currentTrack as any)?.channel_name === 'SMA',
-                  'bg-red-500/20 text-red-300': (currentTrack as any)?.channel_name === 'SMK',
+                  'bg-yellow-500/20 text-yellow-300': currentTrack?.channel_name === 'SD',
+                  'bg-blue-500/20 text-blue-300': currentTrack?.channel_name === 'SMP',
+                  'bg-purple-600/20 text-purple-300': currentTrack?.channel_name === 'SMA',
+                  'bg-red-500/20 text-red-300': currentTrack?.channel_name === 'SMK',
                 }">
-                  {{ (currentTrack as any)?.channel_name ?? '-' }}
+                  {{ currentTrack?.channel_name ?? '-' }}
                 </span>
               </div>
 
@@ -774,7 +763,7 @@ onUnmounted(() => {
               </div>
 
               <!-- Deskripsi dengan highlight (hanya insight/audio) -->
-              <div v-if="activeTab === 'insight' && (currentTrack as any)?.isi"
+              <div v-if="activeTab === 'insight' && currentTrack?.isi"
                 class="flex-1 overflow-y-auto pr-1 mb-4 scroll-smooth scrollbar-hide" ref="lyricsContainer">
                 <p class="leading-loose" style="word-break: keep-all; overflow-wrap: break-word;">
                   <template v-for="(word, index) in isiWords" :key="index">
@@ -992,7 +981,7 @@ onUnmounted(() => {
                 <div v-else />
 
                 <div class="flex gap-2">
-                <button v-if="(currentTrack as any)?.audio_url"
+                <button v-if="currentTrack?.audio_url"
                   @click="() => { if (!isPreviewMode) { isUserTabSwitch = true; activeTab = 'insight' } }"
                   :disabled="isPreviewMode" class="px-4 py-2 rounded-full text-xs font-bold transition-all border"
                   :class="isPreviewMode
@@ -1003,7 +992,7 @@ onUnmounted(() => {
                   🎧 Insight
                 </button>
 
-                <button v-if="(currentTrack as any)?.podcast_url"
+                <button v-if="currentTrack?.podcast_url"
                   @click="() => { if (!isPreviewMode) { isUserTabSwitch = true; activeTab = 'podcast' } }"
                   :disabled="isPreviewMode" class="px-4 py-2 rounded-full text-xs font-bold transition-all border"
                   :class="isPreviewMode

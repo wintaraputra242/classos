@@ -197,13 +197,6 @@ async function submitManual() {
   await verifyCode(manualCode.value)
 }
 
-// Declare agar TypeScript tidak error — lib eksternal tanpa tipe (dimuat lewat <script> tag)
-interface ResponsiveVoice {
-  cancel: () => void
-  speak: (text: string, voice: string, options?: { rate?: number; pitch?: number; volume?: number }) => void
-}
-declare const responsiveVoice: ResponsiveVoice | undefined
-
 function speak(text: string) {
   // Fallback ke responsiveVoice kalau speechSynthesis tidak support
   if (typeof responsiveVoice !== 'undefined') {

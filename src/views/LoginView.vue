@@ -13,13 +13,6 @@ const route = useRoute()
 
 const isSessionExpired = computed(() => route.query.reason === 'session_expired')
 
-const demoTokens = [
-  { code: 'DEMO-001', label: 'SMP' },
-  { code: 'SD-2024-ABC', label: 'SD' },
-  { code: 'SMA-2024-DEF', label: 'SMA' },
-  { code: 'SMK-2024-GHI', label: 'SMK' },
-]
-
 const tokenInput = ref('')
 const tokenDisplay = ref('')
 
@@ -36,9 +29,6 @@ function onTokenInput(e: Event) {
   tokenInput.value = formatted.replace(/\s/g, '')
   nextTick(() => { input.value = formatted })
 }
-
-// Declare agar TypeScript tidak error
-declare const responsiveVoice: any
 
 function speak(text: string) {
   // Fallback ke responsiveVoice kalau speechSynthesis tidak support

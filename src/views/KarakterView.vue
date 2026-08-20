@@ -21,7 +21,7 @@ const dayIndex = new Date().getDate()
 const habitData = computed(() => karakterData.filter(k => k.category === 'habit'))
 const karaterDataArr = computed(() => karakterData.filter(k => k.category === 'karakter'))
 
-const todayHighlight = computed<any>(() => {
+const todayHighlight = computed<KarakterItem | undefined>(() => {
   const pool = activeTab.value === 'karakter'
     ? karaterDataArr.value
     : activeTab.value === 'habit'
@@ -94,11 +94,11 @@ const habitProgress = computed(() =>
           'Fokus Hari Ini' }}
       </p>
       <div class="flex items-start gap-4">
-        <div class="text-5xl">{{ todayHighlight.emoji }}</div>
+        <div class="text-5xl">{{ todayHighlight?.emoji }}</div>
         <div class="flex-1">
-          <h2 class="text-xl font-black dark:text-white text-gray-900 mb-1">{{ todayHighlight.title }}</h2>
-          <p class="text-sm dark:text-gray-300 text-gray-600 leading-relaxed">{{ todayHighlight.description }}</p>
-          <div v-if="todayHighlight.category === 'habit'" class="mt-3 flex items-center gap-3">
+          <h2 class="text-xl font-black dark:text-white text-gray-900 mb-1">{{ todayHighlight?.title }}</h2>
+          <p class="text-sm dark:text-gray-300 text-gray-600 leading-relaxed">{{ todayHighlight?.description }}</p>
+          <div v-if="todayHighlight?.category === 'habit'" class="mt-3 flex items-center gap-3">
             <div class="flex-1 h-2 rounded-full dark:bg-gray-700 bg-gray-200">
               <div class="h-2 rounded-full bg-brand-red dark:bg-brand-green transition-all" style="width: 60%" />
             </div>
