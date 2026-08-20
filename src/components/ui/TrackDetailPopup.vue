@@ -3,7 +3,8 @@
 import { computed, nextTick, onMounted, onUnmounted, ref, watch } from 'vue'
 import { usePlayerStore } from '@/stores/player'
 import { useThemeStore } from '@/stores/theme'
-import type { PlayerTrack } from '@/types';
+import type { PlayerTrack, ContentQuestion, ContentQuiz } from '@/types';
+import ReportKontenModal from '@/components/ui/ReportKontenModal.vue'
 
 const props = defineProps<{
   modelValue: boolean
@@ -29,6 +30,155 @@ const currentTrack = computed(() => {
 })
 
 const close = () => emit('update:modelValue', false)
+
+// ✅ Report Konten
+const showReportModal = ref(false)
+
+// ✅ Tools Konten: Question / Quiz / Slide / Projek — panel di overlay showImagePreview
+type ToolPanel = 'question' | 'quiz' | 'slide' | 'projek' | null
+const activeToolPanel = ref<ToolPanel>(null)
+
+const toolButtons: { key: Exclude<ToolPanel, null>; label: string; icon: string }[] = [
+  { key: 'question', label: 'Question', icon: 'ri-question-line' },
+  { key: 'quiz', label: 'Quiz', icon: 'ri-list-check-3' },
+  { key: 'slide', label: 'Slide', icon: 'ri-image-2-line' },
+  { key: 'projek', label: 'Projek', icon: 'ri-flag-line' },
+]
+
+function toggleToolPanel(panel: ToolPanel) {
+  activeToolPanel.value = activeToolPanel.value === panel ? null : panel
+}
+
+// ✅ Panel tools jadi konten utama & gambar default otomatis mengecil ke pojok kanan atas
+const isToolPanelOpen = computed(() => activeToolPanel.value !== null)
+
+// ✅ Text-to-speech per item (Question: pertanyaan & jawaban terpisah, Quiz: soal + pilihan jawaban)
+// Reuse pola dari startBriefingTTS() di BerandaView.vue — responsiveVoice kalau ada, fallback native
+const speakingKey = ref<string | null>(null)
+
+function stopSpeak() {
+  const rv = (window as any).responsiveVoice
+  if (rv?.cancel) rv.cancel()
+  window.speechSynthesis?.cancel()
+  speakingKey.value = null
+}
+
+function speak(key: string, text: string) {
+  if (!text) return
+
+  // Toggle: klik lagi tombol yang sama saat masih bicara → stop
+  if (speakingKey.value === key) {
+    stopSpeak()
+    return
+  }
+
+  stopSpeak() // stop suara lain yang mungkin masih jalan
+
+  const rv = (window as any).responsiveVoice
+  if (rv?.speak) {
+    speakingKey.value = key
+    rv.speak(text, 'Indonesian Female', {
+      onend: () => { if (speakingKey.value === key) speakingKey.value = null },
+    })
+    return
+  }
+
+  if (window.speechSynthesis) {
+    speakingKey.value = key
+    const utt = new SpeechSynthesisUtterance(text)
+    utt.lang = 'id-ID'
+    utt.onend = utt.onerror = () => { if (speakingKey.value === key) speakingKey.value = null }
+    window.speechSynthesis.speak(utt)
+  }
+}
+
+function quizSpeechText(q: ContentQuiz): string {
+  const opts = q.options.map((opt, i) => `${String.fromCharCode(65 + i)}. ${opt}`).join(', ')
+  return `${q.question}. Pilihan jawaban: ${opts}`
+}
+
+// Reveal jawaban per pertanyaan (accordion), reset tiap kali panel dibuka
+const revealedAnswers = ref<Set<number>>(new Set())
+function toggleAnswer(index: number) {
+  const next = new Set(revealedAnswers.value)
+  next.has(index) ? next.delete(index) : next.add(index)
+  revealedAnswers.value = next
+}
+
+// Pilihan jawaban quiz per soal (index soal -> index opsi dipilih)
+const quizSelected = ref<Record<number, number>>({})
+function selectQuizOption(qIndex: number, optIndex: number) {
+  if (quizSelected.value[qIndex] !== undefined) return // sudah dijawab, kunci
+  quizSelected.value = { ...quizSelected.value, [qIndex]: optIndex }
+}
+
+// State tiap opsi quiz (buat nentuin warna tombol & badge lingkaran A/B/C/D)
+function quizOptionState(qIndex: number, optIndex: number, correctIndex: number): 'default' | 'correct' | 'wrong' | 'other' {
+  const selected = quizSelected.value[qIndex]
+  if (selected === undefined) return 'default'
+  if (optIndex === correctIndex) return 'correct'
+  if (optIndex === selected) return 'wrong'
+  return 'other'
+}
+
+const quizOptionClasses: Record<string, string> = {
+  default: 'dark:bg-indigo-900/40 dark:border-indigo-700/50 dark:text-indigo-100 border-gray-300 text-gray-600 hover:dark:bg-indigo-800/50 hover:bg-gray-100',
+  correct: 'dark:bg-emerald-900/40 border-emerald-400 dark:border-emerald-500 text-emerald-600 dark:text-emerald-300 font-bold',
+  wrong: 'dark:bg-red-900/40 border-red-400 dark:border-red-500 text-red-600 dark:text-red-300 font-bold',
+  other: 'dark:bg-indigo-950/30 border-gray-200 dark:border-indigo-900/40 text-gray-400 dark:text-indigo-300/40',
+}
+
+const quizBadgeClasses: Record<string, string> = {
+  default: 'dark:border-indigo-400 border-gray-400 dark:text-indigo-200 text-gray-500',
+  correct: 'dark:border-emerald-400 border-emerald-500 dark:text-emerald-300 text-emerald-600 dark:bg-emerald-500/20',
+  wrong: 'dark:border-red-400 border-red-500 dark:text-red-300 text-red-600 dark:bg-red-500/20',
+  other: 'dark:border-indigo-800 border-gray-300 dark:text-indigo-500/50 text-gray-400',
+}
+
+// Navigasi slide di panel Slide — mirip slider gambar utama, state terpisah
+const currentSlideIndex = ref(0)
+function nextSlide() {
+  if (!displaySlides.value.length) return
+  currentSlideIndex.value = (currentSlideIndex.value + 1) % displaySlides.value.length
+}
+function prevSlide() {
+  if (!displaySlides.value.length) return
+  currentSlideIndex.value = (currentSlideIndex.value - 1 + displaySlides.value.length) % displaySlides.value.length
+}
+
+watch(activeToolPanel, () => {
+  revealedAnswers.value = new Set()
+  quizSelected.value = {}
+  currentSlideIndex.value = 0
+  stopSpeak()
+})
+
+// ⚠️ SEMENTARA — dummy data untuk uji coba tampilan Question/Quiz/Slide/Projek selama
+// backend belum kirim field ini di response konten. Begitu backend sudah mengirim
+// questions/quiz/slides/project asli, computed di bawah otomatis pakai data asli
+// (dummy hanya jadi fallback saat field-nya kosong/undefined) — hapus blok ini &
+// fallback-nya kalau sudah tidak diperlukan lagi.
+const DUMMY_QUESTIONS: ContentQuestion[] = [
+  { question: 'Apa yang menyebabkan pelangi muncul setelah hujan?', answer: 'Cahaya matahari yang dibiaskan dan dipantulkan oleh tetesan air hujan sehingga terurai menjadi warna-warna spektrum.' },
+  { question: 'Kenapa air mendidih pada suhu 100°C di permukaan laut?', answer: 'Karena pada suhu itu tekanan uap air sama dengan tekanan udara sekitar (1 atm), sehingga air berubah menjadi uap.' },
+]
+
+const DUMMY_QUIZ: ContentQuiz[] = [
+  { question: 'Berapa jumlah warna dalam pelangi?', options: ['5', '6', '7', '8'], correct_index: 2 },
+  { question: 'Proses berubahnya air menjadi uap disebut?', options: ['Kondensasi', 'Evaporasi', 'Presipitasi', 'Sublimasi'], correct_index: 1 },
+]
+
+const DUMMY_PROJECT = 'Buatlah percobaan sederhana membuat pelangi menggunakan gelas berisi air dan senter, lalu dokumentasikan hasilnya dalam bentuk foto beserta penjelasan singkat tentang proses pembiasan cahaya yang terjadi.'
+
+const displayQuestions = computed(() => currentTrack.value?.questions ?? DUMMY_QUESTIONS)
+const displayQuiz = computed(() => currentTrack.value?.quiz ?? DUMMY_QUIZ)
+const displaySlides = computed(() => {
+  if (currentTrack.value?.slides?.length) return currentTrack.value.slides
+  // fallback dummy: Slide selalu berisi 4 gambar square (spec dari bos) — pakai gambar
+  // konten yang sama berulang, cuma untuk uji coba tampilan sebelum data asli tersedia
+  return currentTrack.value?.image_url ? Array(4).fill(currentTrack.value.image_url) : []
+})
+const displayProject = computed(() => currentTrack.value?.project ?? DUMMY_PROJECT)
 
 const isiWords = computed(() => {
   const isi = (currentTrack.value as any)?.isi
@@ -498,6 +648,9 @@ watch(showImagePreview, (val) => {
   if (val) {
     imagePosition.value = 'center' // reset ke tengah setiap dibuka
     currentImageIndex.value = 0
+  } else {
+    activeToolPanel.value = null
+    stopSpeak()
   }
 })
 
@@ -830,7 +983,15 @@ onUnmounted(() => {
 
               </div>
 
-              <div v-if="currentTrack?.type !== 'lagu'" class="flex justify-end gap-2 mt-4">
+              <div v-if="currentTrack?.type !== 'lagu'" class="flex justify-between items-center gap-2 mt-4">
+                <button v-if="currentTrack" @click="showReportModal = true"
+                  class="px-3 py-2 rounded-full text-xs font-bold transition-all border flex items-center gap-1.5 border-gray-300 dark:border-zinc-600 text-gray-500 dark:text-gray-400 hover:bg-red-50 dark:hover:bg-red-500/10 hover:text-red-500 dark:hover:text-red-400 hover:border-red-300 dark:hover:border-red-500/40"
+                  title="Laporkan konten ini">
+                  <i class="ri-flag-2-line" /> Report
+                </button>
+                <div v-else />
+
+                <div class="flex gap-2">
                 <button v-if="(currentTrack as any)?.audio_url"
                   @click="() => { if (!isPreviewMode) { isUserTabSwitch = true; activeTab = 'insight' } }"
                   :disabled="isPreviewMode" class="px-4 py-2 rounded-full text-xs font-bold transition-all border"
@@ -852,6 +1013,7 @@ onUnmounted(() => {
                       : 'border-gray-300 dark:border-zinc-600 text-gray-500 dark:text-gray-400 hover:bg-gray-100 dark:hover:bg-zinc-800'">
                   🎙 Podcast
                 </button>
+                </div>
               </div>
             </div>
           </div>
@@ -936,12 +1098,16 @@ onUnmounted(() => {
           <Transition name="fade">
             <div v-if="showImagePreview"
               class="fixed inset-0 z-[99999] flex items-center bg-black/80 transition-all duration-300"
-              :class="imagePosition === 'center' ? 'justify-center' : 'justify-start'"
+              :class="isToolPanelOpen || imagePosition === 'center' ? 'justify-center' : 'justify-start'"
               @click="showImagePreview = false">
 
-              <!-- Gambar besar (center / left) -->
-              <Transition name="image-move">
-                <div v-if="imagePosition !== 'minimized'" key="large" class="relative transition-all duration-300"
+              <!-- Konten besar: gambar (mode normal) ATAU panel tools (saat salah satu tombol aktif).
+                   Disatukan dalam SATU Transition mode="out-in" supaya keduanya tidak pernah tampil
+                   bersamaan sebagai flex sibling — itu penyebab animasi "lompat ke kanan dulu baru ke
+                   tengah" sebelumnya (dua elemen sama-sama ikut layout flex saat crossfade). -->
+              <Transition name="big-content" mode="out-in">
+                <div v-if="!isToolPanelOpen && imagePosition !== 'minimized'" key="large"
+                  class="relative transition-all duration-300 z-10"
                   :class="imagePosition === 'left' ? 'ml-8 lg:ml-16' : ''" @click.stop>
 
                   <!-- Slider -->
@@ -1004,8 +1170,167 @@ onUnmounted(() => {
                   </div>
                 </div>
 
-                <!-- Gambar kecil di pojok kiri atas -->
-                <div v-else key="small" class="absolute top-4 left-4 z-20 group" @click.stop>
+                <!-- Slide — 4 gambar square (spec dari bos), tampil besar seperti gambar default,
+                     bukan di dalam card panel, ditambah tombol close + prev/next slide -->
+                <div v-else-if="activeToolPanel === 'slide'" key="slide-view" class="relative" @click.stop>
+                  <div v-if="displaySlides.length" class="relative overflow-hidden rounded-lg">
+                    <img :src="displaySlides[currentSlideIndex]" :alt="`Slide ${currentSlideIndex + 1}`"
+                      class="w-[min(80vw,70vh)] aspect-square object-cover select-none transition-opacity duration-300" />
+
+                    <!-- Tombol prev -->
+                    <button v-if="displaySlides.length > 1"
+                      class="absolute left-2 top-1/2 -translate-y-1/2 w-10 h-10 rounded-full bg-black/40 hover:bg-black/60 flex items-center justify-center text-white transition-all duration-200 hover:scale-110"
+                      @click="prevSlide">
+                      <i class="ri-arrow-left-s-line text-2xl" />
+                    </button>
+
+                    <!-- Tombol next -->
+                    <button v-if="displaySlides.length > 1"
+                      class="absolute right-2 top-1/2 -translate-y-1/2 w-10 h-10 rounded-full bg-black/40 hover:bg-black/60 flex items-center justify-center text-white transition-all duration-200 hover:scale-110"
+                      @click="nextSlide">
+                      <i class="ri-arrow-right-s-line text-2xl" />
+                    </button>
+
+                    <!-- Dots indicator -->
+                    <div v-if="displaySlides.length > 1"
+                      class="absolute bottom-3 left-1/2 -translate-x-1/2 flex gap-1.5">
+                      <button v-for="(s, idx) in displaySlides" :key="idx"
+                        class="rounded-full transition-all duration-200"
+                        :class="idx === currentSlideIndex ? 'w-2.5 h-2.5 bg-white' : 'w-2 h-2 bg-white/40 hover:bg-white/60'"
+                        @click="currentSlideIndex = idx" />
+                    </div>
+
+                    <!-- Counter -->
+                    <div v-if="displaySlides.length > 1"
+                      class="absolute top-3 left-3 px-2.5 py-1 rounded-full bg-black/50 text-white text-xs font-medium">
+                      {{ currentSlideIndex + 1 }} / {{ displaySlides.length }}
+                    </div>
+                  </div>
+
+                  <!-- Empty state -->
+                  <div v-else
+                    class="w-[min(80vw,70vh)] aspect-square rounded-lg dark:bg-zinc-800 bg-gray-100 flex items-center justify-center">
+                    <p class="text-xs dark:text-gray-500 text-gray-400 italic">
+                      Belum ada slide tambahan untuk konten ini.
+                    </p>
+                  </div>
+
+                  <!-- Tombol close -->
+                  <button
+                    class="absolute top-2 right-2 w-9 h-9 rounded-full bg-black/50 hover:bg-black/70 flex items-center justify-center text-white transition-all duration-200 hover:scale-110"
+                    @click="activeToolPanel = null" title="Tutup">
+                    <i class="ri-close-line text-lg" />
+                  </button>
+                </div>
+
+                <!-- Panel tools — jadi konten utama saat salah satu tombol aktif -->
+                <div v-else-if="activeToolPanel" key="panel"
+                  class="relative z-10 w-full sm:w-[26rem] max-w-[85vw] max-h-[80vh] rounded-2xl dark:bg-zinc-900 bg-white shadow-2xl overflow-hidden flex flex-col"
+                  @click.stop>
+
+                  <!-- Header panel + tombol close -->
+                  <div
+                    class="flex items-center justify-between px-4 py-3 border-b dark:border-zinc-800 border-gray-100 flex-shrink-0">
+                    <h3 class="text-xs font-black dark:text-white text-gray-900 flex items-center gap-1.5">
+                      <i :class="toolButtons.find(t => t.key === activeToolPanel)?.icon" />
+                      {{ toolButtons.find(t => t.key === activeToolPanel)?.label }}
+                    </h3>
+                    <button @click="activeToolPanel = null"
+                      class="w-7 h-7 flex items-center justify-center rounded-lg dark:bg-zinc-800 bg-gray-100 hover:opacity-80 transition-opacity">
+                      <i class="ri-close-line text-sm dark:text-gray-400 text-gray-500" />
+                    </button>
+                  </div>
+
+                  <Transition name="fade" mode="out-in">
+                    <div class="overflow-y-auto scrollbar-hide p-4 flex-1" :key="activeToolPanel">
+
+                      <!-- Question -->
+                      <template v-if="activeToolPanel === 'question'">
+                        <div v-if="displayQuestions.length" class="space-y-2.5">
+                          <div v-for="(q, i) in displayQuestions" :key="i"
+                            class="p-4 rounded-2xl border dark:bg-gradient-to-br dark:from-[#1b2560] dark:to-[#10173a] dark:border-indigo-800/40 bg-gray-50 border-gray-100">
+                            <div class="flex items-start justify-between gap-2 mb-2">
+                              <p class="text-xs font-bold dark:text-white text-gray-900 flex-1">{{ q.question }}</p>
+                              <button @click="speak(`q-question-${i}`, q.question)"
+                                class="w-6 h-6 rounded-full flex items-center justify-center flex-shrink-0 transition-colors"
+                                :class="speakingKey === `q-question-${i}` ? 'bg-brand-green text-white' : 'dark:bg-indigo-900/60 bg-gray-200 dark:text-indigo-200 text-gray-500 hover:opacity-80'"
+                                title="Bacakan pertanyaan">
+                                <i class="text-xs" :class="speakingKey === `q-question-${i}` ? 'ri-volume-up-fill' : 'ri-volume-up-line'" />
+                              </button>
+                            </div>
+                            <button v-if="!revealedAnswers.has(i)" @click="toggleAnswer(i)"
+                              class="text-[10px] font-bold text-amber-500 dark:text-amber-400 hover:underline">
+                              Tampilkan Jawaban
+                            </button>
+                            <div v-else class="flex items-start justify-between gap-2">
+                              <p class="text-xs dark:text-indigo-100 text-gray-600 flex-1">{{ q.answer }}</p>
+                              <button @click="speak(`q-answer-${i}`, q.answer)"
+                                class="w-6 h-6 rounded-full flex items-center justify-center flex-shrink-0 transition-colors"
+                                :class="speakingKey === `q-answer-${i}` ? 'bg-brand-green text-white' : 'dark:bg-indigo-900/60 bg-gray-200 dark:text-indigo-200 text-gray-500 hover:opacity-80'"
+                                title="Bacakan jawaban">
+                                <i class="text-xs" :class="speakingKey === `q-answer-${i}` ? 'ri-volume-up-fill' : 'ri-volume-up-line'" />
+                              </button>
+                            </div>
+                          </div>
+                        </div>
+                        <p v-else class="text-xs dark:text-gray-500 text-gray-400 italic">
+                          Belum ada pertanyaan untuk konten ini.
+                        </p>
+                      </template>
+
+                      <!-- Quiz -->
+                      <template v-else-if="activeToolPanel === 'quiz'">
+                        <div v-if="displayQuiz.length" class="space-y-3">
+                          <div v-for="(q, qi) in displayQuiz" :key="qi"
+                            class="p-4 rounded-2xl border dark:bg-gradient-to-br dark:from-[#1b2560] dark:to-[#10173a] dark:border-indigo-800/40 bg-gray-50 border-gray-100">
+                            <div class="flex items-start justify-between gap-2 mb-3">
+                              <p class="text-xs font-bold dark:text-white text-gray-900 flex-1">{{ q.question }}</p>
+                              <button @click="speak(`quiz-${qi}`, quizSpeechText(q))"
+                                class="w-6 h-6 rounded-full flex items-center justify-center flex-shrink-0 transition-colors"
+                                :class="speakingKey === `quiz-${qi}` ? 'bg-brand-green text-white' : 'dark:bg-indigo-900/60 bg-gray-200 dark:text-indigo-200 text-gray-500 hover:opacity-80'"
+                                title="Bacakan soal & pilihan jawaban">
+                                <i class="text-xs" :class="speakingKey === `quiz-${qi}` ? 'ri-volume-up-fill' : 'ri-volume-up-line'" />
+                              </button>
+                            </div>
+                            <div class="space-y-2">
+                              <button v-for="(opt, oi) in q.options" :key="oi" @click="selectQuizOption(qi, oi)"
+                                class="w-full flex items-center gap-3 text-left px-3 py-2.5 rounded-xl border transition-colors"
+                                :class="quizOptionClasses[quizOptionState(qi, oi, q.correct_index)]">
+                                <span class="w-6 h-6 rounded-full border-2 flex items-center justify-center text-[10px] font-bold flex-shrink-0"
+                                  :class="quizBadgeClasses[quizOptionState(qi, oi, q.correct_index)]">
+                                  {{ String.fromCharCode(65 + oi) }}
+                                </span>
+                                <span class="text-xs flex-1">{{ opt }}</span>
+                              </button>
+                            </div>
+                          </div>
+                        </div>
+                        <p v-else class="text-xs dark:text-gray-500 text-gray-400 italic">
+                          Belum ada quiz untuk konten ini.
+                        </p>
+                      </template>
+
+                      <!-- Projek -->
+                      <template v-else-if="activeToolPanel === 'projek'">
+                        <div v-if="displayProject"
+                          class="p-4 rounded-2xl border dark:bg-gradient-to-br dark:from-[#1b2560] dark:to-[#10173a] dark:border-indigo-800/40 bg-gray-50 border-gray-100">
+                          <p class="text-xs dark:text-indigo-100 text-gray-600 leading-relaxed">
+                            {{ displayProject }}
+                          </p>
+                        </div>
+                        <p v-else class="text-xs dark:text-gray-500 text-gray-400 italic">
+                          Belum ada projek untuk konten ini.
+                        </p>
+                      </template>
+
+                    </div>
+                  </Transition>
+                </div>
+              </Transition>
+
+              <!-- Thumbnail kecil: manual-minimize atau otomatis saat panel tools aktif -->
+              <Transition name="image-move">
+                <div v-if="!isToolPanelOpen && imagePosition === 'minimized'" key="small" class="absolute top-4 left-4 z-20 group" @click.stop>
                   <img :src="previewImages[currentImageIndex]" :alt="currentTrack?.title"
                     class="w-32 h-32 object-cover rounded-lg shadow-lg border-2 border-white select-none" />
 
@@ -1021,11 +1346,27 @@ onUnmounted(() => {
                     <i class="ri-expand-diagonal-line text-sm" />
                   </button>
                 </div>
+
+                <!-- Gambar kecil otomatis di pojok kiri atas — saat salah satu panel tools aktif -->
+                <div v-else-if="isToolPanelOpen" key="tool-thumb" class="absolute top-4 left-4 z-20" @click.stop>
+                  <img :src="previewImages[currentImageIndex]" :alt="currentTrack?.title"
+                    class="w-20 h-20 object-cover rounded-lg shadow-lg border-2 border-white select-none" />
+                </div>
               </Transition>
 
-              <!-- Tombol close -->
+              <!-- Toolbar Question / Quiz / Slide / Projek — di pojok kanan bawah agar mudah dijangkau guru -->
+              <div class="absolute bottom-4 right-4 z-30 flex items-center gap-2" @click.stop>
+                <button v-for="tool in toolButtons" :key="tool.key" @click="toggleToolPanel(tool.key)"
+                  class="w-10 h-10 rounded-full flex items-center justify-center text-white transition-all duration-200 hover:scale-110"
+                  :class="activeToolPanel === tool.key ? 'bg-brand-green' : 'bg-black/50 hover:bg-black/70'"
+                  :title="tool.label">
+                  <i :class="tool.icon" class="text-lg" />
+                </button>
+              </div>
+
+              <!-- Tombol close overlay keseluruhan -->
               <button
-                class="absolute top-4 right-4 w-10 h-10 rounded-full bg-white/10 hover:bg-white/20 flex items-center justify-center text-white transition-all duration-200 hover:scale-110"
+                class="absolute top-4 right-4 w-10 h-10 rounded-full bg-white/10 hover:bg-white/20 flex items-center justify-center text-white transition-all duration-200 hover:scale-110 z-40"
                 @click="showImagePreview = false">
                 <i class="ri-close-line text-2xl" />
               </button>
@@ -1033,6 +1374,9 @@ onUnmounted(() => {
             </div>
           </Transition>
         </Teleport>
+
+        <!-- Report Konten -->
+        <ReportKontenModal v-model="showReportModal" />
       </div>
 
     </Transition>
@@ -1100,5 +1444,16 @@ onUnmounted(() => {
 .image-move-leave-to {
   opacity: 0;
   transform: scale(0.85);
+}
+
+.big-content-enter-active,
+.big-content-leave-active {
+  transition: all 0.3s cubic-bezier(0.34, 1.56, 0.64, 1);
+}
+
+.big-content-enter-from,
+.big-content-leave-to {
+  opacity: 0;
+  transform: scale(0.9) translateY(10px);
 }
 </style>

@@ -10,7 +10,9 @@ import { stikerNewsData, karakterData, getRandomItems } from '@/data/mockData'
 import type { PlayerTrack } from '@/types'
 import jsQR from 'jsqr'
 import TrackDetailPopup from '@/components/ui/TrackDetailPopup.vue'
-import * as faceapi from 'face-api.js'
+// ⚠️ Dihapus — face-api.js sudah tidak dipakai sama sekali (dulu dicoba, range deteksinya
+// kurang, sekarang pindah ke BlazeFace). Import mati ini tetap ikut bundle tfjs-core-nya
+// sendiri dan bentrok dengan tf.min.js yang disuntik CDN untuk BlazeFace di bawah.
 import { generateSessionId, sanitizeAiText } from '@/helpers'
 import { useClassSessionStore } from '@/stores/classSession'
 import BriefingModal from '@/components/beranda/BriefingModal.vue'
@@ -24,6 +26,8 @@ import HeroSlider from '@/components/beranda/HeroSlider.vue'
 import EducationSongSection from '@/components/beranda/EducationSongSection.vue'
 import StikerNewsRecommended from '@/components/beranda/StikerNewsRecommended.vue'
 import TeacherModeSection from '@/components/beranda/TeacherModeSection.vue'
+// ⚠️ DINONAKTIFKAN SEMENTARA — Google Vision API di-pause, dipindah ke backend nanti
+// import { countPeopleFromPhoto } from '@/services/api'
 // import * as cocoSsd from '@tensorflow-models/coco-ssd'
 // import '@tensorflow/tfjs'
 
@@ -630,6 +634,13 @@ const faceCount = ref<number | null>(null)
 // const faceModelLoaded = ref(false)
 // let _detectInterval: ReturnType<typeof setInterval> | null = null
 
+// ✅ Max-count aggregation untuk atasi occlusion (siswa tertutup siswa lain).
+// Ambil jumlah tertinggi yang terdeteksi selama live detection, bukan cuma frame terakhir,
+// karena occlusion sifatnya sementara — siswa yang tertutup bisa kelihatan lagi di frame lain.
+let _maxFaceCount = 0
+let _pendingCount = -1
+let _pendingStreak = 0
+
 const endClassModalRef = ref<InstanceType<typeof EndClassModal> | null>(null)
 
 async function openEndClass() {
@@ -644,10 +655,18 @@ async function openEndClass() {
   countdown.value = 0
   faceCount.value = null
   endClassNote.value = ''
+  endClassSubmitError.value = null
+  _maxFaceCount = 0
+  _pendingCount = -1
+  _pendingStreak = 0
 
   await nextTick()
+  await new Promise(r => setTimeout(r, 300))
 
-  loadCocoModel().catch(e => console.warn('[coco-ssd] load gagal:', e))
+  // ✅ Load model BlazeFace kalau belum siap — dengan UI loading
+  if (!_blazefaceModel) {
+    loadBlazefaceModel().catch(e => console.warn('[blazeface] load gagal:', e))
+  }
 
   try {
     let stream: MediaStream | null = null
@@ -663,9 +682,7 @@ async function openEndClass() {
       try {
         stream = await navigator.mediaDevices.getUserMedia(constraint)
         break
-      } catch {
-        continue
-      }
+      } catch { continue }
     }
 
     if (!stream) throw new Error('Tidak ada kamera yang tersedia')
@@ -683,74 +700,132 @@ async function openEndClass() {
           videoEl.play().then(() => resolve()).catch(() => resolve())
         }
       })
+    } else {
+      console.warn('[camera] videoEndClassRef tidak ditemukan')
     }
 
     await new Promise(r => setTimeout(r, 300))
-    startLiveDetection() // ← aktifkan
+
+    // ✅ Jalankan live detection setelah kamera siap
+    startLiveDetection()
+
   } catch (err) {
     console.error('Kamera tidak bisa diakses', err)
   }
 }
 
-let _cocoModel: any | null = null
+// ✅ BlazeFace — pengganti coco-ssd, khusus deteksi wajah (bukan bounding box badan).
+// coco-ssd sebelumnya di-pause karena mentok di kasus occlusion; deteksi berbasis wajah
+// diharapkan lebih menangkap siswa yang badannya tertutup tapi wajahnya masih sedikit
+// kelihatan. Sama seperti coco-ssd sebelumnya, dimuat via CDN saat dibutuhkan (bukan
+// npm dependency) supaya tidak menambah ukuran bundle utama.
+let _blazefaceModel: any | null = null
 let _detectInterval: ReturnType<typeof setInterval> | null = null
 const isDetecting = ref(false)
 
 let _tfScriptLoaded = false
+let _blazefaceScriptLoaded = false
+// ✅ Single-flight guard — cegah tf.min.js / blazeface.js ke-inject 2x kalau
+// loadBlazefaceModel() kepanggil lebih dari sekali sebelum load pertama selesai
+// (mis. preload setelah step Listening + trigger saat openEndClass hampir bersamaan).
+// Sebelumnya ini yang bikin kernel TF.js "already registered" berkali-kali di console.
+let _tfScriptLoadingPromise: Promise<void> | null = null
+let _blazefaceScriptLoadingPromise: Promise<void> | null = null
+let _blazefaceModelLoadingPromise: Promise<void> | null = null
 
-async function loadCocoScripts(): Promise<void> {
-  if (_tfScriptLoaded) return
-
-  await new Promise<void>((resolve, reject) => {
-    const tfScript = document.createElement('script')
-    tfScript.src = 'https://cdn.jsdelivr.net/npm/@tensorflow/tfjs@4.22.0/dist/tf.min.js'
-    tfScript.onload = () => {
-      const cocoScript = document.createElement('script')
-      cocoScript.src = 'https://cdn.jsdelivr.net/npm/@tensorflow-models/coco-ssd@2.2.3/dist/coco-ssd.min.js'
-      cocoScript.onload = () => {
-        _tfScriptLoaded = true
-        resolve()
-      }
-      cocoScript.onerror = reject
-      document.head.appendChild(cocoScript)
+async function loadBlazefaceScripts(): Promise<void> {
+  if (!_tfScriptLoaded) {
+    if (!_tfScriptLoadingPromise) {
+      _tfScriptLoadingPromise = new Promise<void>((resolve, reject) => {
+        const tfScript = document.createElement('script')
+        tfScript.src = 'https://cdn.jsdelivr.net/npm/@tensorflow/tfjs@4.22.0/dist/tf.min.js'
+        tfScript.onload = () => { _tfScriptLoaded = true; resolve() }
+        tfScript.onerror = reject
+        document.head.appendChild(tfScript)
+      })
     }
-    tfScript.onerror = reject
-    document.head.appendChild(tfScript)
-  })
-}
+    await _tfScriptLoadingPromise
+  }
 
-async function loadCocoModel() {
-  if (_cocoModel) return
-
-  isDetecting.value = true
-  try {
-    // Load script dulu kalau belum ada
-    await loadCocoScripts()
-
-    const tf = (window as any).tf
-    const cocoSsd = (window as any).cocoSsd
-
-    if (!tf || !cocoSsd) throw new Error('TensorFlow atau COCO-SSD belum dimuat')
-
-    _cocoModel = await cocoSsd.load({ base: 'lite_mobilenet_v2' })
-  } finally {
-    isDetecting.value = false
+  if (!_blazefaceScriptLoaded) {
+    if (!_blazefaceScriptLoadingPromise) {
+      _blazefaceScriptLoadingPromise = new Promise<void>((resolve, reject) => {
+        const bfScript = document.createElement('script')
+        bfScript.src = 'https://cdn.jsdelivr.net/npm/@tensorflow-models/blazeface@0.1.0/dist/blazeface.min.umd.js'
+        bfScript.onload = () => { _blazefaceScriptLoaded = true; resolve() }
+        bfScript.onerror = reject
+        document.head.appendChild(bfScript)
+      })
+    }
+    await _blazefaceScriptLoadingPromise
   }
 }
 
+const isLoadingModel = ref(false)
+const modelLoadProgress = ref<'idle' | 'loading-tf' | 'loading-model' | 'ready'>('idle')
+
+async function loadBlazefaceModel(): Promise<void> {
+  if (_blazefaceModel) return
+  if (_blazefaceModelLoadingPromise) return _blazefaceModelLoadingPromise
+
+  isLoadingModel.value = true
+  modelLoadProgress.value = 'idle'
+  isDetecting.value = true
+
+  _blazefaceModelLoadingPromise = (async () => {
+    try {
+      modelLoadProgress.value = 'loading-tf'
+      await loadBlazefaceScripts()
+      modelLoadProgress.value = 'loading-model'
+      const tf = (window as any).tf
+      const blazeface = (window as any).blazeface
+
+      if (!tf || !blazeface) throw new Error('TensorFlow atau BlazeFace belum dimuat')
+
+      // ⚠️ maxFaces default library ini kecil (10) — dinaikkan supaya muat 1 kelas penuh.
+      // scoreThreshold diturunkan sedikit dari default (~0.75) supaya wajah yang cuma
+      // sebagian kelihatan (occlusion) tetap punya peluang terdeteksi. Kalau nanti false
+      // positive terlalu banyak, naikkan lagi nilainya.
+      _blazefaceModel = await blazeface.load({ maxFaces: 50, scoreThreshold: 0.5 })
+      modelLoadProgress.value = 'ready'
+    } catch (e) {
+      modelLoadProgress.value = 'idle'
+      throw e
+    } finally {
+      isDetecting.value = false
+      isLoadingModel.value = false
+      _blazefaceModelLoadingPromise = null
+    }
+  })()
+
+  return _blazefaceModelLoadingPromise
+}
+
 async function startLiveDetection() {
-  if (!_cocoModel) await loadCocoModel()
+  if (!_blazefaceModel) await loadBlazefaceModel()
 
   _detectInterval = setInterval(async () => {
     const video = endClassModalRef.value?.videoEndClassRef
     const canvas = endClassModalRef.value?.overlayCanvasRef
-    if (!video || !canvas || capturedPhoto.value) return
+    if (!video || !canvas || capturedPhoto.value || !_blazefaceModel) return
 
     try {
-      // ✅ Turunkan threshold ke 0.25, naikkan maxDetections ke 50
-      const predictions = await _cocoModel!.detect(video, 50, 0.25)
-      const persons = predictions.filter((p: any) => p.class === 'person')
-      faceCount.value = persons.length
+      // returnTensors=false → hasil berupa array angka biasa, tidak perlu dispose tensor manual
+      const predictions = await _blazefaceModel.estimateFaces(video, false)
+      const rawCount = predictions.length
+
+      // ✅ Hanya anggap valid kalau angka ini muncul konsisten ≥2 frame berturut-turut
+      // (mitigasi false positive sesaat), lalu simpan sebagai max jika lebih tinggi.
+      if (rawCount === _pendingCount) {
+        _pendingStreak++
+      } else {
+        _pendingCount = rawCount
+        _pendingStreak = 1
+      }
+      if (_pendingStreak >= 2 && rawCount > _maxFaceCount) {
+        _maxFaceCount = rawCount
+      }
+      faceCount.value = _maxFaceCount
 
       const ctx = canvas.getContext('2d')
       if (!ctx) return
@@ -777,13 +852,16 @@ async function startLiveDetection() {
         offsetY = (video.clientHeight - video.videoHeight * scaleY) / 2
       }
 
-      persons.forEach((person: any, i: number) => {
-        const [x, y, w, h] = person.bbox
-        const sx = x * scaleX + offsetX
-        const sy = y * scaleY + offsetY
-        const sw = w * scaleX
-        const sh = h * scaleY
-        const score = Math.round(person.score * 100)
+      predictions.forEach((face: any, i: number) => {
+        // BlazeFace kasih topLeft/bottomRight [x,y], beda dari bbox [x,y,w,h] milik coco-ssd
+        const [x1, y1] = face.topLeft
+        const [x2, y2] = face.bottomRight
+        const sx = x1 * scaleX + offsetX
+        const sy = y1 * scaleY + offsetY
+        const sw = (x2 - x1) * scaleX
+        const sh = (y2 - y1) * scaleY
+        const rawScore = Array.isArray(face.probability) ? face.probability[0] : face.probability
+        const score = Math.round((rawScore ?? 0) * 100)
 
         ctx.strokeStyle = '#22c55e'
         ctx.lineWidth = 2
@@ -827,6 +905,7 @@ function playSound(src: string, volume = 0.7): void {
 function startCountdown() {
   // ← Stop live detection saat countdown mulai
   // faceCount yang terakhir terdeteksi akan dipakai sebagai hasil final
+  console.log('[endclass] faceCount saat countdown mulai:', faceCount.value)
   stopLiveDetection()
 
   countdown.value = 5
@@ -846,9 +925,13 @@ function startCountdown() {
 }
 
 async function takePhoto() {
+  console.log('[endclass] faceCount saat take photo:', faceCount.value)
+
   const video = endClassModalRef.value?.videoEndClassRef
   const canvas = endClassModalRef.value?.canvasRef
   if (!video || !canvas) return
+
+  stopLiveDetection() // ← setelah ini faceCount tidak di-update lagi
 
   const ctx = canvas.getContext('2d')
   canvas.width = video.videoWidth
@@ -863,7 +946,9 @@ async function takePhoto() {
   _stream?.getTracks().forEach(t => t.stop())
   _stream = null
 
-  // ← faceCount tidak di-reset, pakai hasil deteksi terakhir sebelum countdown
+  // ✅ faceCount sudah dari live detection sebelum stopLiveDetection
+  // tapi kalau reset ke null atau 0 di suatu tempat, ini yang jadi masalah
+
   saveSessionState(localStorage.getItem(SESSION_ID_KEY) as string)
 }
 
@@ -1261,74 +1346,206 @@ function formatListeningTime(secs: number): string {
 // Override handleListeningClick lama agar juga jalankan timer
 // (Hapus/replace fungsi handleListeningClick yang sudah ada dengan versi ini)
 const listeningStartTime = ref<string | null>(null)
+// Taruh di luar fungsi, sejajar dengan deklarasi variabel lain
+// let _finalTranscript = ''
+// let _listeningRestartTimer: ReturnType<typeof setTimeout> | null = null
+
+// Cek apakah Android Speech Bridge tersedia
+function isAndroidSpeechAvailable(): boolean {
+  const available = !!(window as any).AndroidSpeech?.isAvailable?.()
+  console.log('[STT] AndroidSpeech tersedia:', !!(window as any).AndroidSpeech, 'isAvailable:', available)
+  return available
+}
+
+function _setupAndroidSpeechCallback() {
+  ; (window as any).AndroidSpeechCallback = (type: string, data: string) => {
+    switch (type) {
+      case 'onResult':
+        if (data.trim()) {
+          console.log('[STT Android] Result:', data)
+          _transcriptLog.push(data.trim())
+          _finalTranscript += data.trim() + ' '
+          localStorage.setItem(TRANSCRIPT_KEY, JSON.stringify(_transcriptLog))
+        }
+        break
+      case 'onPartial':
+        console.log('[STT Android] Partial:', data)
+        break
+      case 'onError':
+        console.warn('[STT Android] Error:', data)
+        break
+      case 'onStop':
+        console.log('[STT Android] Stopped')
+        break
+      case 'onReady':
+        console.log('[STT Android] Ready')
+        break
+    }
+  }
+}
+
+let _finalTranscript = ''
+let _listeningRestartTimer: ReturnType<typeof setTimeout> | null = null
+const transcriptValue = computed(() =>
+  _transcriptLog.join(' ') + (_finalTranscript ? ' ' + _finalTranscript.trim() : '')
+)
+
+let _listeningRecognition: any = null
+const transcriptText = ref('')
+
+function _createListeningRecognition() {
+  const SpeechRecognition = (window as any).SpeechRecognition || (window as any).webkitSpeechRecognition
+  if (!SpeechRecognition) {
+    console.warn('[STT] SpeechRecognition tidak tersedia')
+    return
+  }
+
+  _listeningRecognition = new SpeechRecognition()
+  _listeningRecognition.lang = 'id-ID'
+  _listeningRecognition.continuous = true
+  _listeningRecognition.interimResults = false
+
+  _listeningRecognition.onstart = () => console.log('[STT] Recognition started')
+
+  _listeningRecognition.onresult = (event: any) => {
+    console.log('[STT] onresult fired, results:', event.results.length)
+    for (let i = event.resultIndex; i < event.results.length; i++) {
+      if (event.results[i].isFinal) {
+        const text = event.results[i][0].transcript.trim()
+        console.log('[STT] Final text:', text)
+        if (!text) continue
+
+        _transcriptLog.push(text)
+        _finalTranscript += text + ' '
+        transcriptText.value = transcriptText.value
+          ? transcriptText.value + ' ' + text
+          : text
+        localStorage.setItem(TRANSCRIPT_KEY, JSON.stringify(_transcriptLog))
+      }
+    }
+  }
+
+  _listeningRecognition.onerror = (e: any) => {
+    if (e.error === 'no-speech') return
+    console.error('[STT] Error:', e.error)
+  }
+
+  _listeningRecognition.onend = () => {
+    console.log('[STT] Recognition ended, listeningStatus:', listeningStatus.value)
+    if (listeningStatus.value && !playerStore.isPlaying) {
+      _listeningRecognition?.start()
+    }
+  }
+}
+
+const _wasPlayingBeforeListening = ref(false)
 
 async function handleListeningClickWithTimer() {
   if (listeningStatus.value) {
-    _mediaStream?.getTracks().forEach(t => t.stop())
-    _mediaStream = null
     listeningStatus.value = false
+
+    _listeningRecognition?.stop()
+    _listeningRecognition = null
     _recognition?.stop()
     _recognition = null
+
+    transcriptText.value = ''
+
+    if (_listeningRestartTimer) { clearTimeout(_listeningRestartTimer); _listeningRestartTimer = null }
     if (listeningTimer) { clearInterval(listeningTimer); listeningTimer = null }
 
     localStorage.setItem(LISTENING_KEY, JSON.stringify({
       elapsed: listeningElapsed.value,
       startedAt: null,
-      listeningStartTime: listeningStartTime.value // ← ikut disimpan
+      listeningStartTime: listeningStartTime.value
     }))
-  } else {
-    try {
-      _mediaStream = await navigator.mediaDevices.getUserMedia({ audio: true })
-      listeningStatus.value = true
 
-      // ✅ Catat waktu mulai HANYA sekali (saat pertama kali mulai, bukan tiap resume)
-      if (!listeningStartTime.value) {
-        listeningStartTime.value = new Date().toISOString()
+    // ✅ Resume audio hanya kalau masih ada track DAN audio belum selesai sendiri
+    if (_wasPlayingBeforeListening.value && playerStore.currentTrack && !playerStore.isPlaying) {
+      // Cek apakah audio memang di-pause oleh kita, bukan selesai natural
+      // Hanya resume kalau currentTime > 0 (belum selesai)
+      if (playerStore.currentTime > 0) {
+        setTimeout(() => {
+          playerStore.togglePlay()
+        }, 500)
       }
-
-      localStorage.setItem(LISTENING_KEY, JSON.stringify({
-        elapsed: listeningElapsed.value,
-        startedAt: Date.now(),
-        listeningStartTime: listeningStartTime.value
-      }))
-
-      listeningTimer = setInterval(() => {
-        listeningElapsed.value++
-        localStorage.setItem(LISTENING_KEY, JSON.stringify({
-          elapsed: listeningElapsed.value,
-          startedAt: Date.now(),
-          listeningStartTime: listeningStartTime.value
-        }))
-      }, 1000)
-
-      const SpeechRecognition = (window as any).SpeechRecognition || (window as any).webkitSpeechRecognition
-      if (SpeechRecognition) {
-        _recognition = new SpeechRecognition()
-        _recognition.lang = 'id-ID'
-        _recognition.continuous = true
-        _recognition.interimResults = false
-        _recognition.onresult = (event: any) => {
-          for (let i = event.resultIndex; i < event.results.length; i++) {
-            if (event.results[i].isFinal) {
-              _transcriptLog.push(event.results[i][0].transcript)
-              localStorage.setItem(TRANSCRIPT_KEY, JSON.stringify(_transcriptLog))
-            }
-          }
-        }
-        _recognition.onend = () => { if (listeningStatus.value) _recognition?.start() }
-        _recognition.start()
-      }
-    } catch {
-      console.error('Mikrofon tidak bisa diakses')
     }
+    _wasPlayingBeforeListening.value = false
+
+    return
   }
+
+  // ✅ Pause audio dulu sebelum mulai listening
+  if (playerStore.isPlaying) {
+    _wasPlayingBeforeListening.value = true
+    playerStore.togglePlay()
+    await new Promise(r => setTimeout(r, 300))
+  } else {
+    _wasPlayingBeforeListening.value = false
+  }
+
+  listeningStatus.value = true
+  _listeningJustStarted.value = true
+  setTimeout(() => { _listeningJustStarted.value = false }, 1000)
+
+  _finalTranscript = _transcriptLog.join(' ')
+  transcriptText.value = _transcriptLog.join(' ')
+
+  if (!listeningStartTime.value) {
+    listeningStartTime.value = new Date().toISOString()
+  }
+
+  localStorage.setItem(LISTENING_KEY, JSON.stringify({
+    elapsed: listeningElapsed.value,
+    startedAt: Date.now(),
+    listeningStartTime: listeningStartTime.value
+  }))
+
+  listeningTimer = setInterval(() => {
+    listeningElapsed.value++
+    localStorage.setItem(LISTENING_KEY, JSON.stringify({
+      elapsed: listeningElapsed.value,
+      startedAt: Date.now(),
+      listeningStartTime: listeningStartTime.value
+    }))
+  }, 1000)
+
+  _createListeningRecognition()
+  _recognition = _listeningRecognition
+  _recognition?.start()
 }
 
+// Watch audio player
+const _listeningJustStarted = ref(false)
+
+watch(() => playerStore.isPlaying, async (playing) => {
+  if (!listeningStatus.value) return
+
+  // ✅ Skip watch kalau listening baru saja dimulai
+  if (_listeningJustStarted.value) return
+
+  if (playing) {
+    // Audio mulai → stop mic
+    if (_listeningRestartTimer) { clearTimeout(_listeningRestartTimer); _listeningRestartTimer = null }
+    _listeningRecognition?.stop()
+    _recognition?.stop()
+    _recognition = null
+  } else {
+    // Audio berhenti → resume mic setelah jeda
+    await new Promise(r => setTimeout(r, 800))
+    if (listeningStatus.value && !_recognition) {
+      _createListeningRecognition()
+      _recognition = _listeningRecognition
+      _recognition?.start()
+    }
+  }
+})
 
 const submittingListening = ref(false) // untuk disable tombol saat request jalan
 
 const listeningStopTime = ref<string | null>(null) // ← tambahan, isi saat completeListening
 const submittingEndClass = ref(false)
+const endClassSubmitError = ref<string | null>(null)
 
 const showSessionReportPopup = ref(false)
 const sessionScore = ref<number>(0)
@@ -1338,35 +1555,59 @@ const scoreAnimating = ref(false)
 const showScoreReason = ref(false)
 
 async function completeListening() {
+  _wasPlayingBeforeListening.value = false
+
   if (listeningStatus.value) handleListeningClickWithTimer()
+  if (_listeningRestartTimer) { clearTimeout(_listeningRestartTimer); _listeningRestartTimer = null }
 
   submittingListening.value = true
 
   const stopTime = new Date().toISOString()
   listeningStopTime.value = stopTime
   saveSessionState(localStorage.getItem(SESSION_ID_KEY) as string)
-  const transcriptText = _transcriptLog.join(' ')
+
+  // Fallback kalau _transcriptLog kosong
+  if (_transcriptLog.length === 0) {
+    try {
+      const saved = localStorage.getItem(TRANSCRIPT_KEY)
+      if (saved) {
+        const parsed = JSON.parse(saved)
+        if (Array.isArray(parsed) && parsed.length > 0) {
+          _transcriptLog = parsed
+        }
+      }
+    } catch { }
+  }
+
+  const transcriptTextInFunc = _transcriptLog.length > 0
+    ? _transcriptLog.join(' ')
+    : _finalTranscript.trim() || 'Tidak ada percakapan yang tercatat selama sesi listening.'
 
   await classSession.saveListening({
     listening_start_time: listeningStartTime.value ?? stopTime,
     listening_stop_time: stopTime,
-    listening_text: transcriptText,
+    listening_text: transcriptTextInFunc,
   })
 
   submittingListening.value = false
-
   showListeningPopup.value = false
   unlockNext('listening')
 
   localStorage.removeItem(LISTENING_KEY)
   localStorage.removeItem(TRANSCRIPT_KEY)
-  // ❌ HAPUS baris ini: listeningStartTime.value = null
-  // Biarkan tetap ada, supaya laporan sesi (dan watcher yang jalan belakangan) tetap dapat nilai yang benar
 
-  classSession.runSummarize(transcriptText || 'Tidak ada percakapan yang tercatat selama sesi listening.')
+  loadBlazefaceModel().catch(() => { })
 
+  classSession.runSummarize(transcriptTextInFunc)
+
+  transcriptText.value = ''
   _transcriptLog = []
+  _finalTranscript = ''
 }
+
+const transcriptFinal = _transcriptLog.length > 0
+  ? _transcriptLog.join(' ')
+  : transcriptText.value.trim() || _finalTranscript.trim() || 'Tidak ada percakapan yang tercatat selama sesi listening.'
 
 // ── Summary generation (placeholder API) ────────────────────────────────
 
@@ -1447,6 +1688,7 @@ function closeSessionReport() {
 async function submitEndClass() {
   stopNoteRecordingIfActive()
   submittingEndClass.value = true
+  endClassSubmitError.value = null
 
   // Konversi base64 capturedPhoto ke File
   const blob = await (await fetch(capturedPhoto.value!)).blob()
@@ -1459,7 +1701,9 @@ async function submitEndClass() {
 
   if (classSession.stopClassState.error) {
     console.error('Gagal upload foto:', classSession.stopClassState.error)
-    // opsional: tampilkan toast error
+    submittingEndClass.value = false
+    endClassSubmitError.value = classSession.stopClassState.error
+    return
   }
 
   // Lanjut evaluate seperti sebelumnya
@@ -1469,6 +1713,7 @@ async function submitEndClass() {
 
   if (classSession.evaluate.error) {
     console.error('Gagal evaluate:', classSession.evaluate.error)
+    endClassSubmitError.value = classSession.evaluate.error
     return
   }
 
@@ -1820,9 +2065,11 @@ function requestConfirmDetection() {
 }
 
 function confirmDetectionYes() {
+  console.log('[endclass] faceCount saat konfirmasi yes:', faceCount.value)
   showFaceConfirmPopup.value = false
   startCountdown()
 }
+
 
 function confirmDetectionNo() {
   showFaceConfirmPopup.value = false
@@ -1846,7 +2093,7 @@ onMounted(() => {
   if (linkedUser.value) {
     loadFavorites()
     // Pre-load model kalau guru sudah login sebelumnya
-    // loadCocoModel().catch(e => console.warn('[coco-ssd] preload gagal:', e))
+    // loadBlazefaceModel().catch(e => console.warn('[blazeface] preload gagal:', e))
   }
 
   // ✅ Daftarkan callback navigasi ke store
@@ -1973,10 +2220,11 @@ onUnmounted(() => {
       :briefing-done="classSession.brief.done" @close="closeBriefing" @restart-tts="restartBriefingTTS"
       @toggle-tts="startBriefingTTS" @complete="completeBriefing" @retry="retryBriefing" />
 
-    <ListeningModal v-model="showListeningPopup" :listening-elapsed="listeningElapsed"
-      :listening-status="listeningStatus" :step-status="stepStatus.listening"
-      :submitting-listening="submittingListening" :format-listening-time="formatListeningTime"
-      @toggle="handleListeningClickWithTimer" @complete="completeListening" />
+    <ListeningModal v-model="showListeningPopup" :listening-status="listeningStatus"
+      :listening-elapsed="listeningElapsed" :submitting-listening="submittingListening"
+      :step-status="stepStatus.listening" :transcript-value="transcriptValue"
+      :format-listening-time="formatListeningTime" @toggle="handleListeningClickWithTimer"
+      @complete="completeListening" />
 
     <SummaryModal v-model="showSummaryPopup" :summary-text="summaryText" :loading="classSession.summarize.loading"
       :error="classSession.summarize.error" :is-speaking="isSpeaking" :is-paused="isPaused"
@@ -1987,10 +2235,12 @@ onUnmounted(() => {
     <EndClassModal ref="endClassModalRef" v-model="showEndClassPopup" :captured-photo="capturedPhoto"
       :is-detecting="isDetecting" :face-count="faceCount" :countdown="countdown" :show-flash="showFlash"
       :end-class-note="endClassNote" :is-recording-note="isRecordingNote" :submitting-end-class="submittingEndClass"
-      :show-face-confirm="showFaceConfirmPopup" @update:end-class-note="endClassNote = $event" @close="closeEndClass"
-      @toggle-note-recording="toggleNoteRecording" @request-confirm="requestConfirmDetection"
-      @confirm-yes="confirmDetectionYes" @confirm-no="confirmDetectionNo" @retake="retakePhoto"
-      @submit="submitEndClass" />
+      :submit-error="endClassSubmitError"
+      :show-face-confirm="showFaceConfirmPopup" :is-loading-model="isLoadingModel"
+      :model-load-progress="modelLoadProgress" @update:end-class-note="endClassNote = $event"
+      @update:face-count="faceCount = $event" @close="closeEndClass" @toggle-note-recording="toggleNoteRecording"
+      @request-confirm="requestConfirmDetection" @confirm-yes="confirmDetectionYes" @confirm-no="confirmDetectionNo"
+      @retake="retakePhoto" @take-photo="takePhoto" @confirm-take="startCountdown" @submit="submitEndClass" />
 
     <!-- Konfirmasi Ganti Akun -->
     <ConfirmChangeAccountModal v-model="showConfirmGanti" :linked-user-name="linkedUser?.name"

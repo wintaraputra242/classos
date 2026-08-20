@@ -68,7 +68,7 @@ onUnmounted(() => {
     :class="themeStore.mode === 'dark' ? 'bg-[#0f0f0f] text-white' : 'bg-white text-gray-900'">
 
     <!-- Navbar -->
-    <nav class="fixed top-0 left-0 right-0 z-50 transition-all duration-500" :class="isScrolled
+    <!-- <nav class="fixed top-0 left-0 right-0 z-50 transition-all duration-500" :class="isScrolled
       ? (themeStore.mode === 'dark'
         ? 'bg-[#0f0f0f]/95 border-b border-gray-800 shadow-xl backdrop-blur-sm'
         : 'bg-white/95 border-b border-gray-200 shadow-md backdrop-blur-sm')
@@ -94,7 +94,7 @@ onUnmounted(() => {
           Hubungi Kami
         </a>
       </div>
-    </nav>
+    </nav> -->
 
     <!-- ===== HERO: Image Utama ClassOS ===== -->
     <section class="relative">
@@ -241,7 +241,7 @@ onUnmounted(() => {
             <p class="font-black text-lg mt-2" :class="themeStore.mode === 'dark' ? 'text-white' : 'text-gray-900'">
               Premium</p>
             <p class="text-2xl font-black my-2" :class="themeStore.mode === 'dark' ? 'text-green-400' : 'text-red-500'">
-              Hubungi Kami</p>
+              Paket Layanan</p>
             <p class="text-xs mb-5" :class="themeStore.mode === 'dark' ? 'text-gray-500' : 'text-gray-500'">
               Solusi lengkap untuk sekolah yang siap hadirkan Kelas Pintar dengan AI Teacher Assistant.
             </p>

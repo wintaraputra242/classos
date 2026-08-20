@@ -43,6 +43,23 @@ export interface LoncengItem {
   channel_name?: string
   isPlaying?: boolean,
   isFavorite?: boolean,
+  // ===== TOOLS KONTEN: Question / Quiz / Slide / Projek =====
+  // Semua optional — belum dikirim backend, UI fallback ke empty state
+  questions?: ContentQuestion[]
+  quiz?: ContentQuiz[]
+  slides?: string[]
+  project?: string
+}
+
+export interface ContentQuestion {
+  question: string
+  answer: string
+}
+
+export interface ContentQuiz {
+  question: string
+  options: string[]
+  correct_index: number
 }
 
 // ===== API: SETTING =====
@@ -113,6 +130,11 @@ export interface PlayerTrack {
   isPlaying: boolean
   isFavorite: boolean
   link?: string             // URL stream
+  // ===== TOOLS KONTEN: Question / Quiz / Slide / Projek =====
+  questions?: ContentQuestion[]
+  quiz?: ContentQuiz[]
+  slides?: string[]
+  project?: string
 }
 
 // ===== APP STATE =====

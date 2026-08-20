@@ -173,32 +173,33 @@ onUnmounted(() => {
   </Transition>
 
   <!-- API Error Toast -->
-  <!-- <div class="fixed top-4 right-4 z-[99997] flex flex-col gap-2 max-w-sm w-full pointer-events-none">
+  <div class="fixed top-4 right-4 z-[99997] flex flex-col gap-2 max-w-sm w-full pointer-events-none">
     <TransitionGroup name="toast">
       <div v-for="error in errors" :key="error.id"
         class="relative pointer-events-auto flex items-center gap-3 px-4 py-3.5 rounded-2xl shadow-xl border dark:bg-zinc-900 bg-white dark:border-zinc-700 border-gray-200 overflow-hidden">
 
-        Icon
+        <!-- Icon -->
         <div class="w-9 h-9 rounded-full bg-red-100 dark:bg-red-950/40 flex items-center justify-center flex-shrink-0">
-          <i class="ri-signal-wifi-error-line text-base text-red-500" />
+          <i class="text-base text-red-500"
+            :class="error.status === 401 ? 'ri-lock-2-line' : 'ri-signal-wifi-error-line'" />
         </div>
 
-        Text
+        <!-- Text -->
         <div class="flex-1 min-w-0">
           <p class="text-xs font-bold dark:text-white text-gray-900 mb-0.5">
-            Koneksi Bermasalah
+            {{ error.status === 401 ? 'Sesi Berakhir' : 'Terjadi Kesalahan' }}
           </p>
           <p class="text-[11px] dark:text-gray-400 text-gray-500 leading-relaxed">
-            Gagal memuat sebagian data. Coba muat ulang halaman.
+            {{ error.message || 'Gagal memuat sebagian data. Coba muat ulang halaman.' }}
           </p>
         </div>
 
-        Actions
+        <!-- Actions -->
         <div class="flex items-center gap-1.5 flex-shrink-0">
           <button @click="errorReload"
             class="flex items-center gap-1 px-2.5 py-1.5 rounded-lg bg-brand-red dark:bg-brand-green text-white text-[10px] font-bold hover:opacity-80 transition-opacity">
             <i class="ri-refresh-line text-[10px]" />
-            Muat Ulang
+            {{ error.status === 401 ? 'Login Ulang' : 'Muat Ulang' }}
           </button>
           <button @click="dismiss(error.id)"
             class="w-6 h-6 flex items-center justify-center rounded-lg dark:bg-zinc-800 bg-gray-100 hover:opacity-80 transition-opacity">
@@ -206,14 +207,14 @@ onUnmounted(() => {
           </button>
         </div>
 
-        Progress bar
+        <!-- Progress bar -->
         <div class="absolute bottom-0 left-0 right-0 h-0.5 overflow-hidden">
           <div class="h-full bg-brand-red dark:bg-brand-green" style="animation: shrink 8s linear forwards" />
         </div>
 
       </div>
     </TransitionGroup>
-  </div> -->
+  </div>
 
   <RouterView />
 </template>

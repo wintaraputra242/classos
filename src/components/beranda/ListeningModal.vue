@@ -7,6 +7,7 @@ defineProps<{
   stepStatus: 'locked' | 'active' | 'done'
   submittingListening: boolean
   formatListeningTime: (secs: number) => string
+  transcriptValue?: string
 }>()
 
 const emit = defineEmits<{

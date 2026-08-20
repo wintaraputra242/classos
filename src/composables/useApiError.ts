@@ -4,6 +4,7 @@ import { setApiErrorHandler } from '@/services/api'
 export interface ApiError {
   id: number
   message: string
+  status: number
 }
 
 const errors = ref<ApiError[]>([])
@@ -11,12 +12,12 @@ let _idCounter = 0
 let _isShowing = false // ← cegah duplikat
 
 export function useApiError() {
-  function addError() {
+  function addError(status: number, message: string) {
     if (_isShowing) return // ← sudah ada toast, skip
     _isShowing = true
 
     const id = ++_idCounter
-    errors.value.push({ id, message: '' })
+    errors.value.push({ id, message, status })
 
     setTimeout(() => {
       errors.value = errors.value.filter(e => e.id !== id)
@@ -30,7 +31,7 @@ export function useApiError() {
   }
 
   function register() {
-    setApiErrorHandler(() => addError())
+    setApiErrorHandler((error) => addError(error.status, error.message))
   }
 
   function unregister() {

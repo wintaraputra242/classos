@@ -18,7 +18,7 @@ const BASE_DASHBOARD = import.meta.env.DEV
 let _accessToken: string | null = localStorage.getItem('sn_access_token')
 let _refreshToken: string | null = localStorage.getItem('sn_refresh_token')
 let _isRefreshing = false
-let _refreshQueue: Array<(token: string) => void> = []
+let _refreshQueue: Array<{ resolve: (token: string) => void; reject: (err: unknown) => void }> = []
 
 function setTokens(accessToken: string, refreshToken: string) {
   _accessToken = accessToken
@@ -62,25 +62,40 @@ async function doRefreshToken(): Promise<string> {
   return newAccess
 }
 
-async function getValidAccessToken(): Promise<string> {
-  if (_accessToken) return _accessToken
-
-  // Jika sedang refresh, antri sampai selesai
+// ✅ Single-flight refresh — SATU-SATUNYA tempat yang boleh memanggil doRefreshToken().
+// Dipakai baik oleh getValidAccessToken() (saat belum ada access token) maupun oleh
+// blok retry-401 di dashboardPost/dashboardGet. Sebelumnya blok retry-401 memanggil
+// doRefreshToken() langsung, tidak lewat guard ini — kalau 2 request kena 401 bersamaan,
+// keduanya refresh pakai refresh token yang sama, request kedua ditolak backend
+// ("Login attempt with invalid token") lalu clearTokens() menghapus token baru yang
+// baru saja berhasil di-set oleh request pertama. Menyatukan lewat sini mencegah itu.
+async function ensureFreshToken(): Promise<string> {
   if (_isRefreshing) {
-    return new Promise((resolve) => {
-      _refreshQueue.push(resolve)
+    return new Promise((resolve, reject) => {
+      _refreshQueue.push({ resolve, reject })
     })
   }
 
   _isRefreshing = true
   try {
     const token = await doRefreshToken()
-    _refreshQueue.forEach(resolve => resolve(token))
+    _refreshQueue.forEach(({ resolve }) => resolve(token))
     _refreshQueue = []
     return token
+  } catch (e) {
+    // ✅ Reject semua yang antri juga — sebelumnya queue ini dibiarkan menggantung
+    // selamanya (tidak resolve maupun reject) kalau refresh gagal.
+    _refreshQueue.forEach(({ reject }) => reject(e))
+    _refreshQueue = []
+    throw e
   } finally {
     _isRefreshing = false
   }
+}
+
+async function getValidAccessToken(): Promise<string> {
+  if (_accessToken) return _accessToken
+  return ensureFreshToken()
 }
 
 // ─── helpers ─────────────────────────────────────────────────────────────────
@@ -150,7 +165,7 @@ async function dashboardPost(path: string, body: Record<string, unknown>, retry 
   if (res.status === 401 && retry) {
     _accessToken = null // ← invalidate dulu
     try {
-      const newToken = await doRefreshToken() // ← ini sudah panggil setTokens di dalamnya
+      await ensureFreshToken() // ← single-flight, sudah panggil setTokens di dalamnya
       return dashboardPost(path, body, false)  // ← retry dengan token baru
     } catch {
       clearTokens()
@@ -189,7 +204,7 @@ async function dashboardGet(path: string, params: Record<string, string | number
   if (res.status === 401 && retry) {
     _accessToken = null // ← invalidate dulu
     try {
-      await doRefreshToken() // ← sudah panggil setTokens di dalamnya
+      await ensureFreshToken() // ← single-flight, sudah panggil setTokens di dalamnya
       return dashboardGet(path, params, false) // ← retry
     } catch {
       clearTokens()
@@ -575,6 +590,85 @@ export async function apiUploadImage(data: {
 
   return true
 }
+
+// ─── Report & Request Konten ──────────────────────────────────────────────────
+// ⚠️ Placeholder endpoint — path belum dikonfirmasi backend, sesuaikan saat sudah tersedia
+
+export async function apiReportKonten(data: {
+  id_konten: string | number
+  judul_konten: string
+  nama: string
+  id_provinsi: string | number
+  provinsi: string
+  id_kabupaten_kota: string | number
+  kabupaten_kota: string
+  sekolah: string
+  tingkat: string
+  alasan: string
+}) {
+  return dashboardPost('v1/report-content', { ...data })
+}
+
+export async function apiRequestKonten(data: {
+  request_id: string
+  nama: string
+  id_provinsi: string | number
+  provinsi: string
+  id_kabupaten_kota: string | number
+  kabupaten_kota: string
+  sekolah: string
+  tingkat: string
+  fase: string
+  judul: string
+  penjelasan_konten: string
+  capaian_pembelajaran: string
+  tujuan_pembelajaran: string
+  link_referensi?: string
+  alasan_penting: string
+}) {
+  return dashboardPost('v1/request-content', { ...data })
+}
+
+export function clearTokenCache() {
+  _accessToken = null
+}
+
+// ⚠️ DINONAKTIFKAN SEMENTARA — Google Vision API di-pause, rencananya dipindah ke backend
+// (proxy lewat dashboard API) supaya API key tidak ikut ke-bundle di client. Lihat diskusi
+// terkait: key VITE_* di Vite ter-expose plaintext ke client-side bundle.
+// const VISION_API_KEY = import.meta.env.VITE_GOOGLE_VISION_API_KEY
+//
+// export async function countPeopleFromPhoto(base64Image: string): Promise<number> {
+//   const imageData = base64Image.replace(/^data:image\/\w+;base64,/, '')
+//
+//   const res = await fetch(
+//     `https://vision.googleapis.com/v1/images:annotate?key=${VISION_API_KEY}`,
+//     {
+//       method: 'POST',
+//       headers: { 'Content-Type': 'application/json' },
+//       body: JSON.stringify({
+//         requests: [{
+//           image: { content: imageData },
+//           features: [
+//             { type: 'FACE_DETECTION', maxResults: 100 },
+//             { type: 'OBJECT_LOCALIZATION', maxResults: 100 }
+//           ]
+//         }]
+//       })
+//     }
+//   )
+//
+//   if (!res.ok) throw new Error(`Vision API error: ${res.status}`)
+//
+//   const data = await res.json()
+//   const response = data.responses?.[0]
+//
+//   const faceCount = response?.faceAnnotations?.length ?? 0
+//   const personCount = response?.localizedObjectAnnotations
+//     ?.filter((obj: any) => obj.name.toLowerCase() === 'person').length ?? 0
+//
+//   return Math.max(faceCount, personCount)
+// }
 
 // ─── Dashboard endpoints (dengan auth) ───────────────────────────────────────
 // Siap dipakai untuk endpoint dashboard yang memerlukan Bearer token

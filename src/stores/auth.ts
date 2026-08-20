@@ -1,7 +1,7 @@
 import { defineStore } from 'pinia'
 import { ref, computed } from 'vue'
 import type { Token, Jenjang, StikerNewsSetting } from '@/types'
-import { logMasuk, fetchSetting, saveSetting, login as loginDashboard, logout as logoutDashboard, scanUniqId as scanUniqIdApi, apiProv, apiKab, apiFormTrial } from '@/services/api'
+import { logMasuk, fetchSetting, saveSetting, login as loginDashboard, logout as logoutDashboard, scanUniqId as scanUniqIdApi, apiProv, apiKab, apiFormTrial, apiReportKonten, apiRequestKonten, clearTokenCache } from '@/services/api'
 import { usePlayerStore } from '@/stores/player'
 
 /**
@@ -123,6 +123,7 @@ export const useAuthStore = defineStore('auth', () => {
     localStorage.removeItem('playlist_selected')
     localStorage.removeItem('classos_session_state')
     localStorage.removeItem('classos_id_state')
+    clearTokenCache()
     logoutDashboard() // ← hapus accessToken & refreshToken dari localStorage
   }
 
@@ -252,7 +253,67 @@ export const useAuthStore = defineStore('auth', () => {
     }
   }
 
+  // ── Report & Request Konten ───────────────────────────────────────────────
+  const loadingSubmitReport = ref(false)
+  const loadingSubmitRequest = ref(false)
+
+  async function submitReportKonten(data: {
+    id_konten: string | number
+    judul_konten: string
+    nama: string
+    id_provinsi: string | number
+    provinsi: string
+    id_kabupaten_kota: string | number
+    kabupaten_kota: string
+    sekolah: string
+    tingkat: string
+    alasan: string
+  }): Promise<{ success: boolean; error?: string }> {
+    loadingSubmitReport.value = true
+    try {
+      const res = await apiReportKonten(data)
+      if (res?.data || res?.success) return { success: true }
+      return { success: false, error: res?.message ?? 'Gagal mengirim laporan.' }
+    } catch (e: any) {
+      console.warn('[submitReportKonten] failed:', e)
+      return { success: false, error: e?.response?.data?.message ?? 'Terjadi kesalahan. Coba lagi.' }
+    } finally {
+      loadingSubmitReport.value = false
+    }
+  }
+
+  async function submitRequestKonten(data: {
+    request_id: string
+    nama: string
+    id_provinsi: string | number
+    provinsi: string
+    id_kabupaten_kota: string | number
+    kabupaten_kota: string
+    sekolah: string
+    tingkat: string
+    fase: string
+    judul: string
+    penjelasan_konten: string
+    capaian_pembelajaran: string
+    tujuan_pembelajaran: string
+    link_referensi?: string
+    alasan_penting: string
+  }): Promise<{ success: boolean; error?: string }> {
+    loadingSubmitRequest.value = true
+    try {
+      const res = await apiRequestKonten(data)
+      if (res?.data || res?.success) return { success: true }
+      return { success: false, error: res?.message ?? 'Gagal mengirim permintaan.' }
+    } catch (e: any) {
+      console.warn('[submitRequestKonten] failed:', e)
+      return { success: false, error: e?.response?.data?.message ?? 'Terjadi kesalahan. Coba lagi.' }
+    } finally {
+      loadingSubmitRequest.value = false
+    }
+  }
+
   return {
-    token, isLoggedIn, jenjang, userId, setting, settingLoaded, siteName, siteLogo, isTrial, loading, linkedUser, provList, kabList, loadingProv, loadingKab, loadingSubmitTrial, expiredDate, estimationDay, fetchProv, fetchKab, submitFormTrial, scanUniqId, login, logout, loadSetting, updateSetting
+    token, isLoggedIn, jenjang, userId, setting, settingLoaded, siteName, siteLogo, isTrial, loading, linkedUser, provList, kabList, loadingProv, loadingKab, loadingSubmitTrial, expiredDate, estimationDay, fetchProv, fetchKab, submitFormTrial, scanUniqId, login, logout, loadSetting, updateSetting,
+    loadingSubmitReport, loadingSubmitRequest, submitReportKonten, submitRequestKonten
   }
 })
