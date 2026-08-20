@@ -6,6 +6,7 @@ import { usePlayerStore } from '@/stores/player'
 import { useContentStore } from '@/stores/content'
 import { useAuthStore } from '@/stores/auth'
 import { useContent } from '@/composables/useContent'
+import { getSpeechRecognitionCtor, type SpeechRecognitionLike } from '@/composables/useSpeechToText'
 import { stikerNewsData, karakterData, getRandomItems } from '@/data/mockData'
 import type { LoncengItem, PlayerTrack, StepKey, StepStatusVal, PlaylistItem } from '@/types'
 import TrackDetailPopup from '@/components/ui/TrackDetailPopup.vue'
@@ -110,28 +111,21 @@ function resetHeroTimer() {
   }, 10000)
 }
 
-function mapToPlayerTrack(item: any): PlayerTrack {
-  console.log('[mapToPlayerTrack]', {
-    id: item.id_lonceng,
-    durasi: item.durasi,
-    podcast_durasi: item.podcast_durasi,
-    audio_url: item.audio_url,
-  })
-
+function mapToPlayerTrack(item: LoncengItem): PlayerTrack {
   return {
     id: String(item.id_lonceng),
     id_stikernews: item.id_lonceng,
     id_channel: item.channel,
     title: item.judul,
-    channel_name: channelItems[item.channel],
-    subtitle: (item.isi as string)?.slice(0, 60) + '...' || '',
+    channel_name: channelItems[item.channel] ?? '',
+    subtitle: (item.isi ?? '').slice(0, 60) + '...',
     emoji: '🎧',
-    duration: item.durasi,
-    duration_podcast: item.podcast_durasi,
-    audio_url: item.audio_url,
-    podcast_url: item.podcast_url,
-    image_url: item.gambar_url,
-    isi: item.isi,
+    duration: item.durasi ?? '',
+    duration_podcast: item.podcast_durasi ?? '',
+    audio_url: item.audio_url ?? '',
+    podcast_url: item.podcast_url ?? '',
+    image_url: item.gambar_url ?? '',
+    isi: item.isi ?? '',
     currentTime: 0,
     isPlaying: false,
     isFavorite: false,
@@ -140,7 +134,7 @@ function mapToPlayerTrack(item: any): PlayerTrack {
 }
 
 // Sesuaikan playHero dengan field API
-function playHero(item: any) {
+function playHero(item: LoncengItem) {
   if (!item?.audio_url && !item?.podcast_url) return
 
   const track = mapToPlayerTrack(item)
@@ -152,12 +146,12 @@ function playHero(item: any) {
   playerStore.playWithQueue(track, queueTracks)
 }
 
-function playStikerRandom(item: any) {
+function playStikerRandom(item: LoncengItem) {
   if (!item?.audio_url && !item?.podcast_url) return
 
   const track = mapToPlayerTrack(item)
   const queueTracks = apiRandomItems.value
-    ?.filter((i: any) => i?.audio_url || i?.podcast_url)
+    ?.filter((i) => i?.audio_url || i?.podcast_url)
     .map(mapToPlayerTrack)
 
   playerStore.queueListName = 'StikerNews Pilihan'
@@ -246,7 +240,7 @@ function parseDuration(dur: string): number {
   return (m ?? 0) * 60 + (s ?? 0)
 }
 
-function playFavorite(item: any) {
+function playFavorite(item: LoncengItem) {
   if (!item?.audio_url && !item?.podcast_url) return
 
   const track = mapToPlayerTrack(item)
@@ -261,7 +255,7 @@ function playFavorite(item: any) {
   playerStore.setQueuePageMeta(5, '/favorite', { type: 'favorit' })
 }
 
-function playPlaylist(item: any) {
+function playPlaylist(item: LoncengItem) {
   if (!item?.audio_url && !item?.podcast_url) return
 
   const track = mapToPlayerTrack(item)
@@ -286,7 +280,6 @@ interface LinkedUser { name: string; token: string; userId: string, photo: strin
 const linkedUser = ref<LinkedUser | null>(
   JSON.parse(localStorage.getItem('sn_linked_user') ?? 'null')
 )
-const favoriteItems = ref<any[]>([])
 const favLoading = ref(false)
 const showScanner = ref(false)
 const scanMode = ref<'camera' | 'manual'>('camera')
@@ -303,7 +296,7 @@ const scanTabs = [
   { label: 'Kode Manual', value: 'manual' as const, icon: 'ri-keyboard-line' },
 ]
 
-let _recognition: any = null
+let _recognition: SpeechRecognitionLike | null = null
 let _transcriptLog: string[] = []
 
 function cancelSession() {
@@ -329,7 +322,6 @@ function cancelSession() {
 
 function disconnect() {
   linkedUser.value = null
-  favoriteItems.value = []
   localStorage.removeItem('sn_linked_user')
 
   activeMenuTab.value = 'favorit'
@@ -566,7 +558,7 @@ watch(scanMode, (val) => {
 const currentTrack = computed(() => playerStore.currentTrack)
 const totalSeconds = computed(() => parseDuration(currentTrack.value?.duration ?? '0:00'))
 
-const channelItems: any = {
+const channelItems: Record<number, string> = {
   7: "SD",
   8: "SMP",
   9: "SMA",
@@ -578,9 +570,6 @@ const listeningStatus = ref(false)
 const showSummaryPopup = ref(false)
 const showBriefingPopup = ref(false)
 const showEndClassPopup = ref(false)
-
-// Declare agar TypeScript tidak error
-declare const responsiveVoice: any
 
 function speak(text: string) {
   // Fallback ke responsiveVoice kalau speechSynthesis tidak support
@@ -703,8 +692,18 @@ async function openEndClass() {
 // coco-ssd sebelumnya di-pause karena mentok di kasus occlusion; deteksi berbasis wajah
 // diharapkan lebih menangkap siswa yang badannya tertutup tapi wajahnya masih sedikit
 // kelihatan. Sama seperti coco-ssd sebelumnya, dimuat via CDN saat dibutuhkan (bukan
-// npm dependency) supaya tidak menambah ukuran bundle utama.
-let _blazefaceModel: any | null = null
+// npm dependency) supaya tidak menambah ukuran bundle utama — makanya tipenya minimal
+// (cuma bagian yang dipakai), bukan npm @types.
+interface BlazeFacePrediction {
+  topLeft: [number, number]
+  bottomRight: [number, number]
+  probability: number | number[]
+}
+interface BlazeFaceModel {
+  estimateFaces: (video: HTMLVideoElement, returnTensors: boolean) => Promise<BlazeFacePrediction[]>
+}
+
+let _blazefaceModel: BlazeFaceModel | null = null
 let _detectInterval: ReturnType<typeof setInterval> | null = null
 const isDetecting = ref(false)
 
@@ -762,8 +761,12 @@ async function loadBlazefaceModel(): Promise<void> {
       modelLoadProgress.value = 'loading-tf'
       await loadBlazefaceScripts()
       modelLoadProgress.value = 'loading-model'
-      const tf = (window as any).tf
-      const blazeface = (window as any).blazeface
+      const w = window as unknown as {
+        tf?: unknown
+        blazeface?: { load: (options: { maxFaces: number; scoreThreshold: number }) => Promise<BlazeFaceModel> }
+      }
+      const tf = w.tf
+      const blazeface = w.blazeface
 
       if (!tf || !blazeface) throw new Error('TensorFlow atau BlazeFace belum dimuat')
 
@@ -837,7 +840,7 @@ async function startLiveDetection() {
         offsetY = (video.clientHeight - video.videoHeight * scaleY) / 2
       }
 
-      predictions.forEach((face: any, i: number) => {
+      predictions.forEach((face, i) => {
         // BlazeFace kasih topLeft/bottomRight [x,y], beda dari bbox [x,y,w,h] milik coco-ssd
         const [x1, y1] = face.topLeft
         const [x2, y2] = face.bottomRight
@@ -987,7 +990,7 @@ const speakingStep = ref<StepKey | null>(null)
 
 const showTrackPopup = ref(false)
 
-const handleClickDetailHero = (item: any) => {
+const handleClickDetailHero = (item: LoncengItem) => {
   showTrackPopup.value = true
 
   const track = mapToPlayerTrack(item)
@@ -998,12 +1001,12 @@ const handleClickDetailHero = (item: any) => {
   playerStore.setItemPlay(track, queueTracks)
 }
 
-const handleClickDetailChoose = (item: any) => {
+const handleClickDetailChoose = (item: LoncengItem) => {
   showTrackPopup.value = true
 
   const track = mapToPlayerTrack(item)
   const queueTracks = apiRandomItems.value
-    ?.filter((i: any) => i?.audio_url || i?.podcast_url)
+    ?.filter((i) => i?.audio_url || i?.podcast_url)
     .map(mapToPlayerTrack)
 
   playerStore.setItemPlay(track, queueTracks)
@@ -1302,15 +1305,24 @@ const listeningStartTime = ref<string | null>(null)
 // let _finalTranscript = ''
 // let _listeningRestartTimer: ReturnType<typeof setTimeout> | null = null
 
+// Bridge ke WebView Android (native app) — dipasang oleh shell native, bukan npm package.
+interface AndroidSpeechBridge {
+  isAvailable?: () => boolean
+}
+type AndroidWindow = Window & {
+  AndroidSpeech?: AndroidSpeechBridge
+  AndroidSpeechCallback?: (type: string, data: string) => void
+}
+
 // Cek apakah Android Speech Bridge tersedia
 function isAndroidSpeechAvailable(): boolean {
-  const available = !!(window as any).AndroidSpeech?.isAvailable?.()
-  console.log('[STT] AndroidSpeech tersedia:', !!(window as any).AndroidSpeech, 'isAvailable:', available)
+  const available = !!(window as AndroidWindow).AndroidSpeech?.isAvailable?.()
+  console.log('[STT] AndroidSpeech tersedia:', !!(window as AndroidWindow).AndroidSpeech, 'isAvailable:', available)
   return available
 }
 
 function _setupAndroidSpeechCallback() {
-  ; (window as any).AndroidSpeechCallback = (type: string, data: string) => {
+  ; (window as AndroidWindow).AndroidSpeechCallback = (type: string, data: string) => {
     switch (type) {
       case 'onResult':
         if (data.trim()) {
@@ -1342,28 +1354,30 @@ const transcriptValue = computed(() =>
   _transcriptLog.join(' ') + (_finalTranscript ? ' ' + _finalTranscript.trim() : '')
 )
 
-let _listeningRecognition: any = null
+let _listeningRecognition: SpeechRecognitionLike | null = null
 const transcriptText = ref('')
 
 function _createListeningRecognition() {
-  const SpeechRecognition = (window as any).SpeechRecognition || (window as any).webkitSpeechRecognition
-  if (!SpeechRecognition) {
+  const SpeechRecognitionCtor = getSpeechRecognitionCtor()
+  if (!SpeechRecognitionCtor) {
     console.warn('[STT] SpeechRecognition tidak tersedia')
     return
   }
 
-  _listeningRecognition = new SpeechRecognition()
+  _listeningRecognition = new SpeechRecognitionCtor()
   _listeningRecognition.lang = 'id-ID'
   _listeningRecognition.continuous = true
   _listeningRecognition.interimResults = false
 
   _listeningRecognition.onstart = () => console.log('[STT] Recognition started')
 
-  _listeningRecognition.onresult = (event: any) => {
+  _listeningRecognition.onresult = (event) => {
     console.log('[STT] onresult fired, results:', event.results.length)
     for (let i = event.resultIndex; i < event.results.length; i++) {
-      if (event.results[i].isFinal) {
-        const text = event.results[i][0].transcript.trim()
+      const result = event.results[i]
+      const transcript = result?.[0]?.transcript
+      if (result?.isFinal && transcript) {
+        const text = transcript.trim()
         console.log('[STT] Final text:', text)
         if (!text) continue
 
@@ -1377,7 +1391,7 @@ function _createListeningRecognition() {
     }
   }
 
-  _listeningRecognition.onerror = (e: any) => {
+  _listeningRecognition.onerror = (e) => {
     if (e.error === 'no-speech') return
     console.error('[STT] Error:', e.error)
   }
@@ -1842,7 +1856,7 @@ watch(() => linkedUser.value?.photo, () => {
 })
 
 const isRecordingNote = ref(false)
-let _noteRecognition: any = null
+let _noteRecognition: SpeechRecognitionLike | null = null
 
 function toggleNoteRecording() {
   if (isRecordingNote.value) {
@@ -1852,21 +1866,23 @@ function toggleNoteRecording() {
     return
   }
 
-  const SpeechRecognition = (window as any).SpeechRecognition || (window as any).webkitSpeechRecognition
-  if (!SpeechRecognition) {
+  const SpeechRecognitionCtor = getSpeechRecognitionCtor()
+  if (!SpeechRecognitionCtor) {
     console.warn('SpeechRecognition tidak didukung di browser ini')
     return
   }
 
-  _noteRecognition = new SpeechRecognition()
+  _noteRecognition = new SpeechRecognitionCtor()
   _noteRecognition.lang = 'id-ID'
   _noteRecognition.continuous = true
   _noteRecognition.interimResults = false // ← matikan interim
 
-  _noteRecognition.onresult = (event: any) => {
+  _noteRecognition.onresult = (event) => {
     for (let i = event.resultIndex; i < event.results.length; i++) {
-      if (event.results[i].isFinal) {
-        const text = event.results[i][0].transcript.trim()
+      const result = event.results[i]
+      const transcript = result?.[0]?.transcript
+      if (result?.isFinal && transcript) {
+        const text = transcript.trim()
         endClassNote.value = endClassNote.value
           ? endClassNote.value + ' ' + text
           : text
@@ -1874,7 +1890,7 @@ function toggleNoteRecording() {
     }
   }
 
-  _noteRecognition.onerror = (e: any) => {
+  _noteRecognition.onerror = (e) => {
     console.error('Speech recognition error (note):', e.error)
     isRecordingNote.value = false
   }
@@ -1895,23 +1911,23 @@ function stopNoteRecordingIfActive() {
   }
 }
 
-const handleClickDetailFavorite = (item: any) => {
+const handleClickDetailFavorite = (item: LoncengItem) => {
   showTrackPopup.value = true
 
   const track = mapToPlayerTrack(item)
   const queueTracks = contentStore.favoriteItems
-    ?.filter((i: any) => i?.audio_url || i?.podcast_url)
+    ?.filter((i) => i?.audio_url || i?.podcast_url)
     .map(mapToPlayerTrack)
 
   playerStore.setItemPlay(track, queueTracks)
 }
 
-const handleClickDetailPlaylist = (item: any) => {
+const handleClickDetailPlaylist = (item: LoncengItem) => {
   showTrackPopup.value = true
 
   const track = mapToPlayerTrack(item)
   const queueTracks = contentStore.detailPlaylistItems
-    ?.filter((i: any) => i?.audio_url || i?.podcast_url)
+    ?.filter((i) => i?.audio_url || i?.podcast_url)
     .map(mapToPlayerTrack)
 
   playerStore.setItemPlay(track, queueTracks)
@@ -1992,7 +2008,6 @@ function disconnectTeacher() {
 
   // 10. Putuskan linkedUser
   linkedUser.value = null
-  favoriteItems.value = []
   localStorage.removeItem('sn_linked_user')
 
   // 11. Reset player history
@@ -2088,7 +2103,7 @@ onUnmounted(() => {
   stopLiveDetection() // ← tambahkan
   _mediaStream?.getTracks().forEach(t => t.stop())
   synth.cancel()
-  playerStore.setNavigationCallback(null as any)
+  playerStore.setNavigationCallback(null)
   playerStore.clearQueuePageMeta()
 })
 </script>

@@ -10,7 +10,14 @@ interface ResponsiveVoice {
   speak: (
     text: string,
     voice: string,
-    options?: { rate?: number; pitch?: number; volume?: number; onend?: () => void }
+    options?: {
+      rate?: number
+      pitch?: number
+      volume?: number
+      onstart?: () => void
+      onend?: () => void
+      onerror?: () => void
+    }
   ) => void
 }
 declare const responsiveVoice: ResponsiveVoice | undefined

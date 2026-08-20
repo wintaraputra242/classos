@@ -3,27 +3,30 @@
 import { ref } from 'vue'
 
 // Web Speech API — belum standar di semua browser, TS DOM lib tidak selalu menyediakan tipenya.
-interface SpeechRecognitionResultLike {
+// Diekspor supaya file lain yang punya instance SpeechRecognition sendiri (mis. BerandaView.vue
+// untuk note-dictation & listening transcript) tidak perlu redefine tipe yang sama.
+export interface SpeechRecognitionResultLike {
   isFinal: boolean
   [index: number]: { transcript: string }
 }
-interface SpeechRecognitionEventLike {
+export interface SpeechRecognitionEventLike {
   resultIndex: number
   results: { length: number; [index: number]: SpeechRecognitionResultLike }
 }
-interface SpeechRecognitionLike {
+export interface SpeechRecognitionLike {
   lang: string
   continuous: boolean
   interimResults: boolean
+  onstart: (() => void) | null
   onresult: ((event: SpeechRecognitionEventLike) => void) | null
   onerror: ((event: { error: string }) => void) | null
   onend: (() => void) | null
   start: () => void
   stop: () => void
 }
-type SpeechRecognitionCtor = new () => SpeechRecognitionLike
+export type SpeechRecognitionCtor = new () => SpeechRecognitionLike
 
-function getSpeechRecognitionCtor(): SpeechRecognitionCtor | undefined {
+export function getSpeechRecognitionCtor(): SpeechRecognitionCtor | undefined {
   const w = window as unknown as { SpeechRecognition?: SpeechRecognitionCtor; webkitSpeechRecognition?: SpeechRecognitionCtor }
   return w.SpeechRecognition || w.webkitSpeechRecognition
 }
