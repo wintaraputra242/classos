@@ -214,13 +214,13 @@ onUnmounted(() => {
         </p>
       </div>
 
+      <button @click="showRequestModal = true"
+        class="pill flex items-center gap-1 bg-brand-green text-white hover:opacity-90 transition-opacity">
+        <i class="ri-add-line" /> Request Konten
+      </button>
+
       <div class="flex gap-1.5 flex-wrap items-center">
         <!-- ✅ Dipisah di kiri (bukan bagian grup jenjang) — Request Konten berlaku untuk semua jenjang -->
-        <button @click="showRequestModal = true"
-          class="pill flex items-center gap-1 bg-brand-green text-white hover:opacity-90 transition-opacity">
-          <i class="ri-add-line" /> Request Konten
-        </button>
-        <div class="w-px h-5 dark:bg-gray-700 bg-gray-200 mx-0.5" />
         <button v-for="j in jenjangList" :key="j.label" class="pill text-white transition-all"
           :class="[j.color, activeFilter.label === j.label ? 'opacity-100 ring-2 ring-white/40 ring-offset-1' : 'opacity-40 hover:opacity-70']"
           @click="switchFilter(j)">

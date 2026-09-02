@@ -94,6 +94,11 @@ export default defineConfig({
         // target: 'https://classos-beta.isn-speed.com',
         changeOrigin: true,
         rewrite: (path) => path.replace(/^\/api-dashboard/, '/api'),
+      },
+      '/api-monitoring': {
+        target: 'https://classos-monitoring-beta.isn-speed.com',
+        changeOrigin: true,
+        rewrite: (path) => path.replace(/^\/api-monitoring/, '/api'),
       }
     }
   },

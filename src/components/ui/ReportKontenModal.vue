@@ -22,7 +22,7 @@ const reportedTrack = computed(() => {
   return playerStore.currentTrack
 })
 
-const jenjangOptions = ['SD', 'SMP', 'SMA', 'SMK']
+const kelasOptions = Array.from({ length: 12 }, (_, i) => `Kelas ${i + 1}`)
 
 const form = ref({
   nama: '',
@@ -43,7 +43,7 @@ function resetForm() {
     id_provinsi: '',
     id_kabupaten_kota: '',
     sekolah: auth.siteName ?? '',
-    tingkat: auth.jenjang ?? '',
+    tingkat: '',
     alasan: '',
   }
   submitError.value = ''
@@ -91,20 +91,17 @@ async function submit() {
   submitting.value = true
   submitError.value = ''
 
-  const [idProv, ...provRest] = form.value.id_provinsi.toString().split('-')
-  const [idKab, ...kabRest] = form.value.id_kabupaten_kota.toString().split('-')
+  const [idProv] = form.value.id_provinsi.toString().split('-')
+  const [idKab] = form.value.id_kabupaten_kota.toString().split('-')
 
   const result = await auth.submitReportKonten({
-    id_konten: reportedTrack.value?.id_stikernews ?? reportedTrack.value?.id ?? '',
-    judul_konten: reportedTrack.value?.title ?? '',
+    id_content: reportedTrack.value?.id_stikernews ?? reportedTrack.value?.id ?? '',
     nama: form.value.nama.trim(),
-    id_provinsi: idProv ?? '',
-    provinsi: provRest.join('-'),
-    id_kabupaten_kota: idKab ?? '',
-    kabupaten_kota: kabRest.join('-'),
+    provinsi: idProv ?? '',
+    kab_kota: idKab ?? '',
     sekolah: form.value.sekolah.trim(),
     tingkat: form.value.tingkat,
-    alasan: form.value.alasan.trim(),
+    alasan_keliru: form.value.alasan.trim(),
   })
 
   submitting.value = false
@@ -219,7 +216,7 @@ async function submit() {
                 </label>
                 <select v-model="form.tingkat" class="form-input">
                   <option value="" disabled>Pilih tingkat</option>
-                  <option v-for="j in jenjangOptions" :key="j" :value="j">{{ j }}</option>
+                  <option v-for="k in kelasOptions" :key="k" :value="k">{{ k }}</option>
                 </select>
               </div>
 

@@ -241,20 +241,17 @@ export const useAuthStore = defineStore('auth', () => {
   const loadingSubmitRequest = ref(false)
 
   async function submitReportKonten(data: {
-    id_konten: string | number
-    judul_konten: string
+    id_content: string | number
     nama: string
-    id_provinsi: string | number
-    provinsi: string
-    id_kabupaten_kota: string | number
-    kabupaten_kota: string
+    provinsi: string | number
+    kab_kota: string | number
     sekolah: string
     tingkat: string
-    alasan: string
+    alasan_keliru: string
   }): Promise<{ success: boolean; error?: string }> {
     loadingSubmitReport.value = true
     try {
-      const res = await apiReportKonten(data)
+      const res = await apiReportKonten({ ...data, akun_speedid: userId.value })
       if (res?.data || res?.success) return { success: true }
       return { success: false, error: res?.message ?? 'Gagal mengirim laporan.' }
     } catch (e) {
@@ -266,12 +263,9 @@ export const useAuthStore = defineStore('auth', () => {
   }
 
   async function submitRequestKonten(data: {
-    request_id: string
     nama: string
-    id_provinsi: string | number
-    provinsi: string
-    id_kabupaten_kota: string | number
-    kabupaten_kota: string
+    provinsi: string | number
+    kab_kota: string | number
     sekolah: string
     tingkat: string
     fase: string
@@ -284,7 +278,7 @@ export const useAuthStore = defineStore('auth', () => {
   }): Promise<{ success: boolean; error?: string }> {
     loadingSubmitRequest.value = true
     try {
-      const res = await apiRequestKonten(data)
+      const res = await apiRequestKonten({ ...data, akun_speedid: userId.value })
       if (res?.data || res?.success) return { success: true }
       return { success: false, error: res?.message ?? 'Gagal mengirim permintaan.' }
     } catch (e) {

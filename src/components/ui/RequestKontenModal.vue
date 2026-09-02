@@ -17,7 +17,7 @@ const emit = defineEmits<{
 const auth = useAuthStore()
 const { formatDate, formatTime } = useDate()
 
-const jenjangOptions = ['SD', 'SMP', 'SMA', 'SMK']
+const kelasOptions = Array.from({ length: 12 }, (_, i) => `Kelas ${i + 1}`)
 const faseOptions = ['A', 'B', 'C', 'D', 'E', 'F']
 
 const requestId = ref('')
@@ -50,7 +50,7 @@ function resetForm() {
     id_provinsi: '',
     id_kabupaten_kota: '',
     sekolah: auth.siteName ?? '',
-    tingkat: auth.jenjang ?? '',
+    tingkat: '',
     fase: '',
     judul: '',
     penjelasan_konten: '',
@@ -110,16 +110,13 @@ async function submit() {
   submitting.value = true
   submitError.value = ''
 
-  const [idProv, ...provRest] = form.value.id_provinsi.toString().split('-')
-  const [idKab, ...kabRest] = form.value.id_kabupaten_kota.toString().split('-')
+  const [idProv] = form.value.id_provinsi.toString().split('-')
+  const [idKab] = form.value.id_kabupaten_kota.toString().split('-')
 
   const result = await auth.submitRequestKonten({
-    request_id: requestId.value,
     nama: form.value.nama.trim(),
-    id_provinsi: idProv ?? '',
-    provinsi: provRest.join('-'),
-    id_kabupaten_kota: idKab ?? '',
-    kabupaten_kota: kabRest.join('-'),
+    provinsi: idProv ?? '',
+    kab_kota: idKab ?? '',
     sekolah: form.value.sekolah.trim(),
     tingkat: form.value.tingkat,
     fase: form.value.fase,
@@ -255,7 +252,7 @@ async function submit() {
                   </label>
                   <select v-model="form.tingkat" class="form-input">
                     <option value="" disabled>Pilih tingkat</option>
-                    <option v-for="j in jenjangOptions" :key="j" :value="j">{{ j }}</option>
+                    <option v-for="k in kelasOptions" :key="k" :value="k">{{ k }}</option>
                   </select>
                 </div>
                 <div>

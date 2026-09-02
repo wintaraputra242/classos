@@ -9,7 +9,7 @@ const WA_MESSAGE = encodeURIComponent('Halo, saya ingin mengetahui lebih lanjut 
 const WA_URL = `https://wa.me/${WA_NUMBER}?text=${WA_MESSAGE}`
 
 const DRIVE_URL = 'https://drive.google.com/drive/folders/1ONPvBbYtcCXJARHXUcqHnGA0QXm24rhO'
-const FORM_PREMIUM_URL = 'https://docs.google.com/forms/d/1UHtstThM8NQ0rCuDqq8-GTw5rdk1qUmpH16H8IcJd4I/preview'
+const FORM_PREMIUM_URL = 'https://forms.gle/jrVQorJVoPVX33uQ8'
 const SKP_IMAGE_URL = '/images/skp-flyer.jpeg'
 
 const isScrolled = ref(false)

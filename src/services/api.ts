@@ -27,6 +27,11 @@ const BASE_DASHBOARD = import.meta.env.DEV
   : 'https://classos.isn-speed.com/api'
 // : 'https://classos-beta.isn-speed.com/api'
 
+// BASE_MONITORING : https://classos-monitoring-beta.isn-speed.com/api → report & request konten
+const BASE_MONITORING = import.meta.env.DEV
+  ? '/api-monitoring' // ← pakai proxy saat development
+  : 'https://classos-monitoring-beta.isn-speed.com/api'
+
 // ─── token storage ───────────────────────────────────────────────────────────
 
 let _accessToken: string | null = localStorage.getItem('sn_access_token')
@@ -131,6 +136,19 @@ async function postForm<T = unknown>(baseUrl: string, path: string, params: Reco
     body,
   })
 
+  if (!res.ok) throw new Error(`API ${res.status}: ${path}`)
+  return res.json() as Promise<T>
+}
+
+// POST JSON ke BASE_MONITORING — endpoint content/report & content/request tidak
+// memerlukan Bearer token (lihat Postman collection: header kosong, akun diidentifikasi
+// lewat field akun_speedid di body, bukan lewat sesi login dashboard).
+async function monitoringPost<T = unknown>(path: string, body: Record<string, unknown>): Promise<T> {
+  const res = await fetch(`${BASE_MONITORING}/${path}`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(body),
+  })
   if (!res.ok) throw new Error(`API ${res.status}: ${path}`)
   return res.json() as Promise<T>
 }
@@ -607,30 +625,27 @@ export async function apiUploadImage(data: {
 }
 
 // ─── Report & Request Konten ──────────────────────────────────────────────────
-// ⚠️ Placeholder endpoint — path belum dikonfirmasi backend, sesuaikan saat sudah tersedia
+// POST https://classos-monitoring-beta.isn-speed.com/api/v1/content/report
+// POST https://classos-monitoring-beta.isn-speed.com/api/v1/content/request
 
 export async function apiReportKonten(data: {
-  id_konten: string | number
-  judul_konten: string
+  id_content: string | number
+  akun_speedid: string | number
   nama: string
-  id_provinsi: string | number
-  provinsi: string
-  id_kabupaten_kota: string | number
-  kabupaten_kota: string
+  provinsi: string | number
+  kab_kota: string | number
   sekolah: string
   tingkat: string
-  alasan: string
+  alasan_keliru: string
 }): Promise<ApiEnvelope> {
-  return dashboardPost<ApiEnvelope>('v1/report-content', { ...data })
+  return monitoringPost<ApiEnvelope>('v1/content/report', { ...data })
 }
 
 export async function apiRequestKonten(data: {
-  request_id: string
+  akun_speedid: string | number
   nama: string
-  id_provinsi: string | number
-  provinsi: string
-  id_kabupaten_kota: string | number
-  kabupaten_kota: string
+  provinsi: string | number
+  kab_kota: string | number
   sekolah: string
   tingkat: string
   fase: string
@@ -641,7 +656,7 @@ export async function apiRequestKonten(data: {
   link_referensi?: string
   alasan_penting: string
 }): Promise<ApiEnvelope> {
-  return dashboardPost<ApiEnvelope>('v1/request-content', { ...data })
+  return monitoringPost<ApiEnvelope>('v1/content/request', { ...data })
 }
 
 export function clearTokenCache() {
