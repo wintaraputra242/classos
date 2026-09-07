@@ -7,7 +7,7 @@ import { useContentStore } from '@/stores/content'
 import { useAuthStore } from '@/stores/auth'
 import { useContent, gradientFor, emojiFor } from '@/composables/useContent'
 import { stikerNewsData, karakterData, getRandomItems } from '@/data/mockData'
-import type { PlayerTrack } from '@/types'
+import type { PlayerTrack, StepKey } from '@/types'
 import jsQR from 'jsqr'
 import TrackDetailPopup from '@/components/ui/TrackDetailPopup.vue'
 import * as faceapi from 'face-api.js'
@@ -34,6 +34,10 @@ const contentStore = useContentStore()
 const classSession = useClassSessionStore()
 const auth = useAuthStore()
 const { playItem, setItem } = useContent()
+
+async function switchChannel(channelId: number) {
+  await contentStore.switchChannel(channelId, auth.userId)
+}
 
 // ── Fallback lokal ─────────────────────────────────────────────────────────
 const localRandomNews = computed(() => getRandomItems(stikerNewsData, 5))
@@ -1047,7 +1051,6 @@ const sessionStarted = ref(false)
 // const selectedPlaylistId = ref('')
 const selectedSessionPlaylist = ref<typeof selectedPlaylist.value>(null)
 
-type StepKey = 'briefing' | 'listening' | 'summary' | 'endclass'
 type StepStatusVal = 'locked' | 'active' | 'done'
 
 const stepStatus = ref<Record<StepKey, StepStatusVal>>({
@@ -1084,7 +1087,7 @@ function playSessionPlaylist() {
   if (!tracks.length) return
 
   playerStore.queueListName = selectedSessionPlaylist.value?.name ?? 'Playlist Sesi'
-  playerStore.playWithQueue(tracks[0], tracks)
+  playerStore.playWithQueue(tracks[0]!, tracks)
 }
 
 const SESSION_STATE_KEY = 'classos_session_state'
@@ -1233,7 +1236,7 @@ function unlockNext(current: StepKey) {
   const idx = order.indexOf(current)
   stepStatus.value[current] = 'done'
   if (idx + 1 < order.length) {
-    stepStatus.value[order[idx + 1]] = 'active'
+    stepStatus.value[order[idx + 1]!] = 'active'
   }
   saveSessionState(localStorage.getItem(SESSION_ID_KEY) as string) // ← simpan setiap step selesai
 }
@@ -1974,7 +1977,7 @@ onUnmounted(() => {
       @toggle-tts="startBriefingTTS" @complete="completeBriefing" @retry="retryBriefing" />
 
     <ListeningModal v-model="showListeningPopup" :listening-elapsed="listeningElapsed"
-      :listening-status="listeningStatus" :step-status="stepStatus.listening"
+      :listening-status="listeningStatus" :step-status="stepStatus.listening ?? 'locked'"
       :submitting-listening="submittingListening" :format-listening-time="formatListeningTime"
       @toggle="handleListeningClickWithTimer" @complete="completeListening" />
 

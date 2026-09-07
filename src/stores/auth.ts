@@ -192,8 +192,10 @@ export const useAuthStore = defineStore('auth', () => {
   }
 
   // ── Trial Form ─────────────────────────────────────────────────────────────
-  const provList = ref<{ id: string | number; nama: string }[]>([])
-  const kabList = ref<{ id: string | number; nama: string }[]>([])
+  // ⚠️ Field sesuai response asli API (id_prov/prov, id_kab/kab) — sebelumnya
+  // dideklarasikan sebagai {id, nama} yang tidak pernah cocok dengan pemakaian asli
+  const provList = ref<{ id_prov: string | number; prov: string }[]>([])
+  const kabList = ref<{ id_kab: string | number; kab: string }[]>([])
   const loadingProv = ref(false)
   const loadingKab = ref(false)
   const loadingSubmitTrial = ref(false)

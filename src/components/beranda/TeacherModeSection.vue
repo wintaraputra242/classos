@@ -3,6 +3,7 @@
 import { usePlayerStore } from '@/stores/player'
 import { useContentStore } from '@/stores/content'
 import { gradientFor } from '@/composables/useContent'
+import type { StepKey } from '@/types'
 import { ref } from 'vue';
 
 const props = defineProps<{
@@ -46,7 +47,7 @@ const emit = defineEmits<{
   'back-playlist': []
   'play-playlist': [item: any]
   'detail-playlist': [item: any]
-  'open-step': [key: string]
+  'open-step': [key: StepKey]
   'start-session': []
   'cancel-session': []
   'reset-session': []

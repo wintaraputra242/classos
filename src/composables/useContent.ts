@@ -42,6 +42,7 @@ export function loncengToTrack(item: LoncengItem): PlayerTrack {
     id_channel: item.id_channel,
     title: item.title,
     subtitle: item.channel_name ?? `Channel ${item.id_channel}`,
+    channel_name: item.channel_name ?? '',
     emoji: emojiFor(item) ?? '🎵',
     duration: item.duration ?? '1:00',
     duration_podcast: item.duration_podcast ?? '1:00',

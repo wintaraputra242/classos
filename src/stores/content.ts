@@ -26,7 +26,7 @@ export const useContentStore = defineStore('content', () => {
   const errorDetailPlaylist = ref<string | null>(null)
   const activeChannelId = ref<number>(7)    // default channel 7 (sesuai Postman)
   const lastId = ref(0)                     // cursor pagination
-  const edukasiSongs = ref<{ id: number; url_audio: string; img_url: string, isi: string, judul: string }[]>([])
+  const edukasiSongs = ref<{ id: number; url_audio: string; img_url: string, isi: string, judul: string, durasi?: string }[]>([])
   const hasMore = ref(true)
   const LIMIT = 20 // sesuaikan dengan limit backend
 

@@ -22,6 +22,7 @@ export interface Channel {
 // ===== API: LONCENG / KONTEN =====
 export interface LoncengItem {
   id: number | string
+  id_lonceng?: number
   id_stikernews: number
   id_channel: number
   title: string
@@ -114,6 +115,9 @@ export interface PlayerTrack {
   isFavorite: boolean
   link?: string             // URL stream
 }
+
+// ===== SESI KELAS =====
+export type StepKey = 'briefing' | 'listening' | 'summary' | 'endclass'
 
 // ===== APP STATE =====
 export type ThemeMode = 'dark' | 'light'
