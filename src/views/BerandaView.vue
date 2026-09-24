@@ -651,7 +651,7 @@ async function openEndClass() {
 
   await nextTick()
 
-  loadCocoModel().catch(e => console.warn('[coco-ssd] load gagal:', e))
+  loadPersonModel().catch(e => console.warn('[person-detection] load gagal:', e))
 
   try {
     let stream: MediaStream | null = null
@@ -696,64 +696,117 @@ async function openEndClass() {
   }
 }
 
-let _cocoModel: any | null = null
+// ✅ Model custom deteksi orang (YOLOv8 → TFJS graph model), ditaruh guru di
+// public/models/classos-person-detection/. Signature model: input "images"
+// [1,640,640,3] float32 dinormalisasi 0-1; output [1,5,8400] = (cx,cy,w,h,conf)
+// per anchor, 1 kelas saja (person) — bukan format coco-ssd/BlazeFace, jadi
+// decode box + NMS dilakukan manual di bawah.
+const PERSON_MODEL_URL = '/models/classos-person-detection/model.json'
+const PERSON_CONF_THRESHOLD = 0.4
+const PERSON_IOU_THRESHOLD = 0.45
+
+let _personModel: any | null = null
 let _detectInterval: ReturnType<typeof setInterval> | null = null
 const isDetecting = ref(false)
 
 let _tfScriptLoaded = false
 
-async function loadCocoScripts(): Promise<void> {
-  if (_tfScriptLoaded) return
-
+async function loadTfScript(): Promise<void> {
+  if (_tfScriptLoaded || (window as any).tf) { _tfScriptLoaded = true; return }
   await new Promise<void>((resolve, reject) => {
     const tfScript = document.createElement('script')
     tfScript.src = 'https://cdn.jsdelivr.net/npm/@tensorflow/tfjs@4.22.0/dist/tf.min.js'
-    tfScript.onload = () => {
-      const cocoScript = document.createElement('script')
-      cocoScript.src = 'https://cdn.jsdelivr.net/npm/@tensorflow-models/coco-ssd@2.2.3/dist/coco-ssd.min.js'
-      cocoScript.onload = () => {
-        _tfScriptLoaded = true
-        resolve()
-      }
-      cocoScript.onerror = reject
-      document.head.appendChild(cocoScript)
-    }
+    tfScript.onload = () => { _tfScriptLoaded = true; resolve() }
     tfScript.onerror = reject
     document.head.appendChild(tfScript)
   })
 }
 
-async function loadCocoModel() {
-  if (_cocoModel) return
+async function loadPersonModel() {
+  if (_personModel) return
 
   isDetecting.value = true
   try {
-    // Load script dulu kalau belum ada
-    await loadCocoScripts()
-
+    await loadTfScript()
     const tf = (window as any).tf
-    const cocoSsd = (window as any).cocoSsd
+    if (!tf) throw new Error('TensorFlow belum dimuat')
 
-    if (!tf || !cocoSsd) throw new Error('TensorFlow atau COCO-SSD belum dimuat')
-
-    _cocoModel = await cocoSsd.load({ base: 'lite_mobilenet_v2' })
+    _personModel = await tf.loadGraphModel(PERSON_MODEL_URL)
   } finally {
     isDetecting.value = false
   }
 }
 
+interface DetBox { x: number; y: number; w: number; h: number; score: number }
+
+// Greedy NMS sederhana — buang box yang overlap tinggi (IoU) dengan box berskor lebih tinggi
+function nmsBoxes(boxes: DetBox[], iouThreshold: number): DetBox[] {
+  const sorted = [...boxes].sort((a, b) => b.score - a.score)
+  const kept: DetBox[] = []
+
+  const iou = (a: DetBox, b: DetBox) => {
+    const interX1 = Math.max(a.x, b.x)
+    const interY1 = Math.max(a.y, b.y)
+    const interX2 = Math.min(a.x + a.w, b.x + b.w)
+    const interY2 = Math.min(a.y + a.h, b.y + b.h)
+    const interArea = Math.max(0, interX2 - interX1) * Math.max(0, interY2 - interY1)
+    const unionArea = a.w * a.h + b.w * b.h - interArea
+    return unionArea <= 0 ? 0 : interArea / unionArea
+  }
+
+  for (const box of sorted) {
+    if (!kept.some(k => iou(k, box) > iouThreshold)) kept.push(box)
+  }
+  return kept
+}
+
 async function startLiveDetection() {
-  if (!_cocoModel) await loadCocoModel()
+  if (!_personModel) await loadPersonModel()
 
   _detectInterval = setInterval(async () => {
     const video = endClassModalRef.value?.videoEndClassRef
     const canvas = endClassModalRef.value?.overlayCanvasRef
-    if (!video || !canvas || capturedPhoto.value) return
+    const tf = (window as any).tf
+    if (!video || !canvas || capturedPhoto.value || !_personModel || !tf) return
 
     try {
-      // ✅ Turunkan threshold ke 0.25, naikkan maxDetections ke 50
-      const predictions = await _cocoModel!.detect(video, 50, 0.25)
-      const persons = predictions.filter((p: any) => p.class === 'person')
+      const inputTensor = tf.tidy(() => {
+        const img = tf.browser.fromPixels(video)
+        const resized = tf.image.resizeBilinear(img, [640, 640])
+        return resized.toFloat().div(255).expandDims(0)
+      })
+
+      const output = await _personModel.executeAsync(inputTensor)
+      inputTensor.dispose()
+
+      const outputTensor = Array.isArray(output) ? output[0] : output
+      const data: Float32Array = await outputTensor.data()
+      if (Array.isArray(output)) output.forEach((t: any) => t.dispose())
+      else output.dispose()
+
+      // Output layout [1,5,8400]: baris 0-3 = cx,cy,w,h (dalam skala 640), baris 4 = confidence
+      const numAnchors = 8400
+      const scaleX = video.videoWidth / 640
+      const scaleY = video.videoHeight / 640
+
+      const candidates: DetBox[] = []
+      for (let i = 0; i < numAnchors; i++) {
+        const score = data[4 * numAnchors + i]!
+        if (score < PERSON_CONF_THRESHOLD) continue
+        const cx = data[0 * numAnchors + i]!
+        const cy = data[1 * numAnchors + i]!
+        const w = data[2 * numAnchors + i]!
+        const h = data[3 * numAnchors + i]!
+        candidates.push({
+          x: (cx - w / 2) * scaleX,
+          y: (cy - h / 2) * scaleY,
+          w: w * scaleX,
+          h: h * scaleY,
+          score,
+        })
+      }
+
+      const persons = nmsBoxes(candidates, PERSON_IOU_THRESHOLD)
       faceCount.value = persons.length
 
       const ctx = canvas.getContext('2d')
@@ -767,26 +820,25 @@ async function startLiveDetection() {
       const videoAspect = video.videoWidth / video.videoHeight
       const displayAspect = video.clientWidth / video.clientHeight
 
-      let scaleX: number, scaleY: number, offsetX: number, offsetY: number
+      let dScaleX: number, dScaleY: number, offsetX: number, offsetY: number
 
       if (videoAspect > displayAspect) {
-        scaleY = video.clientHeight / video.videoHeight
-        scaleX = scaleY
-        offsetX = (video.clientWidth - video.videoWidth * scaleX) / 2
+        dScaleY = video.clientHeight / video.videoHeight
+        dScaleX = dScaleY
+        offsetX = (video.clientWidth - video.videoWidth * dScaleX) / 2
         offsetY = 0
       } else {
-        scaleX = video.clientWidth / video.videoWidth
-        scaleY = scaleX
+        dScaleX = video.clientWidth / video.videoWidth
+        dScaleY = dScaleX
         offsetX = 0
-        offsetY = (video.clientHeight - video.videoHeight * scaleY) / 2
+        offsetY = (video.clientHeight - video.videoHeight * dScaleY) / 2
       }
 
-      persons.forEach((person: any, i: number) => {
-        const [x, y, w, h] = person.bbox
-        const sx = x * scaleX + offsetX
-        const sy = y * scaleY + offsetY
-        const sw = w * scaleX
-        const sh = h * scaleY
+      persons.forEach((person, i) => {
+        const sx = person.x * dScaleX + offsetX
+        const sy = person.y * dScaleY + offsetY
+        const sw = person.w * dScaleX
+        const sh = person.h * dScaleY
         const score = Math.round(person.score * 100)
 
         ctx.strokeStyle = '#22c55e'
@@ -806,8 +858,8 @@ async function startLiveDetection() {
         ctx.font = 'bold 11px sans-serif'
         ctx.fillText(`#${i + 1} ${score}%`, sx + 4, sy - 5)
       })
-    } catch {
-      // silent fail
+    } catch (e) {
+      console.warn('[person-detection] error:', e)
     }
   }, 500)
 }
@@ -1849,7 +1901,7 @@ onMounted(() => {
   if (linkedUser.value) {
     loadFavorites()
     // Pre-load model kalau guru sudah login sebelumnya
-    // loadCocoModel().catch(e => console.warn('[coco-ssd] preload gagal:', e))
+    // loadPersonModel().catch(e => console.warn('[person-detection] preload gagal:', e))
   }
 
   // ✅ Daftarkan callback navigasi ke store
