@@ -1,6 +1,7 @@
 <script setup lang="ts">
 import { ref, onMounted, onUnmounted } from 'vue'
 import { useThemeStore } from '@/stores/theme'
+import { logKunjungan } from '@/composables/useLogKunjungan'
 
 const themeStore = useThemeStore()
 
@@ -14,6 +15,13 @@ const SKP_IMAGE_URL = '/images/skp-flyer.jpeg'
 
 const isScrolled = ref(false)
 const showSKPModal = ref(false)
+
+// Video di bawah masing-masing card paket (Trial / Premium / SKP), sesuai urutan card
+const packageVideos = [
+  { id: 'fa5dXP_OvDI', label: 'Trial' },
+  { id: 'FlerC_MDQL0', label: 'Premium' },
+  { id: 'TiBJgfvDWEM', label: 'SKP' },
+]
 
 const steps = [
   {
@@ -56,6 +64,7 @@ function downloadSKP() {
 
 onMounted(() => {
   window.addEventListener('scroll', onScroll)
+  logKunjungan('web')
 })
 
 onUnmounted(() => {
@@ -131,7 +140,7 @@ onUnmounted(() => {
       <div class="max-w-4xl mx-auto px-6">
         <div class="aspect-video rounded-2xl overflow-hidden border shadow-2xl"
           :class="themeStore.mode === 'dark' ? 'border-gray-800' : 'border-gray-200'">
-          <iframe class="w-full h-full" src="https://www.youtube.com/embed/FlerC_MDQL0?si=s9m6mabaWL7BKDTb"
+          <iframe class="w-full h-full" src="https://www.youtube.com/embed/JU6h1v-i3DI"
             title="ClassOS Video" frameborder="0"
             allow="accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture"
             allowfullscreen />
@@ -223,7 +232,7 @@ onUnmounted(() => {
                 <span :class="themeStore.mode === 'dark' ? 'text-gray-300' : 'text-gray-700'">{{ item }}</span>
               </li>
             </ul>
-            <a :href="DRIVE_URL" target="_blank"
+            <a :href="DRIVE_URL" target="_blank" @click="logKunjungan('trial')"
               class="flex items-center justify-center gap-2 py-3 rounded-xl text-xs font-bold transition-all hover:scale-105 border"
               :class="themeStore.mode === 'dark' ? 'border-blue-500/50 text-blue-400 hover:bg-blue-500/10' : 'border-blue-300 text-blue-600 hover:bg-blue-50'">
               <i class="ri-download-line" />
@@ -254,7 +263,7 @@ onUnmounted(() => {
                 <span :class="themeStore.mode === 'dark' ? 'text-gray-300' : 'text-gray-700'">{{ item }}</span>
               </li>
             </ul>
-            <a :href="FORM_PREMIUM_URL" target="_blank"
+            <a :href="FORM_PREMIUM_URL" target="_blank" @click="logKunjungan('premium')"
               class="flex items-center justify-center gap-2 py-3 rounded-xl text-xs font-bold text-white transition-all hover:scale-105 shadow-lg"
               :class="themeStore.mode === 'dark' ? 'bg-green-600 hover:bg-green-500 shadow-green-900' : 'bg-red-500 hover:bg-red-600 shadow-red-200'">
               <i class="ri-file-list-3-line" />
@@ -284,7 +293,7 @@ onUnmounted(() => {
                 <span :class="themeStore.mode === 'dark' ? 'text-gray-300' : 'text-gray-700'">{{ item }}</span>
               </li>
             </ul>
-            <button @click="showSKPModal = true"
+            <button @click="showSKPModal = true; logKunjungan('skp')"
               class="flex items-center justify-center gap-2 py-3 rounded-xl text-xs font-bold transition-all hover:scale-105 border"
               :class="themeStore.mode === 'dark' ? 'border-green-500/50 text-green-400 hover:bg-green-500/10' : 'border-green-400 text-green-700 hover:bg-green-50'">
               <i class="ri-image-line" />
@@ -292,6 +301,17 @@ onUnmounted(() => {
             </button>
           </div>
 
+        </div>
+
+        <!-- Video penjelasan tiap paket — posisinya di bawah masing-masing card di atas -->
+        <div class="grid sm:grid-cols-3 gap-6 mt-6">
+          <div v-for="video in packageVideos" :key="video.id" class="aspect-video rounded-2xl overflow-hidden border shadow-lg"
+            :class="themeStore.mode === 'dark' ? 'border-gray-800' : 'border-gray-200'">
+            <iframe class="w-full h-full" :src="`https://www.youtube.com/embed/${video.id}`"
+              :title="`Video ${video.label}`" frameborder="0"
+              allow="accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture"
+              allowfullscreen />
+          </div>
         </div>
       </div>
     </section>
