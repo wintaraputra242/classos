@@ -1,11 +1,11 @@
 /**
  * StikerNews API Service
- * BASE_BETA : https://id-beta.isn-speed.com  → write ops & data
+ * BASE_BETA : https://isn-speed.com  → write ops & data
  * BASE_PROD : https://id.isn-speed.com        → analytics (read-only prod)
  * BASE_DASHBOARD : https://classos.isn-speed.com/api → auth & dashboard
  */
 
-const BASE_BETA = 'https://id-beta.isn-speed.com'
+const BASE_BETA = 'https://isn-speed.com'
 const BASE_PROD = 'https://id.isn-speed.com'
 // const BASE_DASHBOARD = 'https://classos.isn-speed.com/api'
 const BASE_DASHBOARD = import.meta.env.DEV
@@ -13,12 +13,17 @@ const BASE_DASHBOARD = import.meta.env.DEV
   : 'https://classos.isn-speed.com/api'
 // : 'https://classos-beta.isn-speed.com/api'
 
+// BASE_MONITORING : https://classos-monitoring-beta.isn-speed.com/api → report & request konten
+const BASE_MONITORING = import.meta.env.DEV
+  ? '/api-monitoring' // ← pakai proxy saat development
+  : 'https://classos-monitoring-beta.isn-speed.com/api'
+
 // ─── token storage ───────────────────────────────────────────────────────────
 
 let _accessToken: string | null = localStorage.getItem('sn_access_token')
 let _refreshToken: string | null = localStorage.getItem('sn_refresh_token')
 let _isRefreshing = false
-let _refreshQueue: Array<(token: string) => void> = []
+let _refreshQueue: Array<{ resolve: (token: string) => void; reject: (err: unknown) => void }> = []
 
 function setTokens(accessToken: string, refreshToken: string) {
   _accessToken = accessToken
@@ -62,25 +67,40 @@ async function doRefreshToken(): Promise<string> {
   return newAccess
 }
 
-async function getValidAccessToken(): Promise<string> {
-  if (_accessToken) return _accessToken
-
-  // Jika sedang refresh, antri sampai selesai
+// ✅ Single-flight refresh — SATU-SATUNYA tempat yang boleh memanggil doRefreshToken().
+// Dipakai baik oleh getValidAccessToken() (saat belum ada access token) maupun oleh
+// blok retry-401 di dashboardPost/dashboardGet. Kalau blok retry-401 memanggil
+// doRefreshToken() langsung (tidak lewat guard ini), 2 request yang kena 401 bersamaan
+// akan refresh pakai refresh token yang sama — request kedua ditolak backend
+// ("Login attempt with invalid token") lalu clearTokens() menghapus token baru yang
+// baru saja berhasil di-set oleh request pertama. Menyatukan lewat sini mencegah itu.
+async function ensureFreshToken(): Promise<string> {
   if (_isRefreshing) {
-    return new Promise((resolve) => {
-      _refreshQueue.push(resolve)
+    return new Promise((resolve, reject) => {
+      _refreshQueue.push({ resolve, reject })
     })
   }
 
   _isRefreshing = true
   try {
     const token = await doRefreshToken()
-    _refreshQueue.forEach(resolve => resolve(token))
+    _refreshQueue.forEach(({ resolve }) => resolve(token))
     _refreshQueue = []
     return token
+  } catch (e) {
+    // ✅ Reject semua yang antri juga — kalau tidak, queue ini menggantung selamanya
+    // (tidak resolve maupun reject) kalau refresh gagal.
+    _refreshQueue.forEach(({ reject }) => reject(e))
+    _refreshQueue = []
+    throw e
   } finally {
     _isRefreshing = false
   }
+}
+
+async function getValidAccessToken(): Promise<string> {
+  if (_accessToken) return _accessToken
+  return ensureFreshToken()
 }
 
 // ─── helpers ─────────────────────────────────────────────────────────────────
@@ -103,6 +123,19 @@ async function postForm(baseUrl: string, path: string, params: Record<string, st
     body,
   })
 
+  if (!res.ok) throw new Error(`API ${res.status}: ${path}`)
+  return res.json()
+}
+
+// POST JSON ke BASE_MONITORING — endpoint content/report & content/request tidak
+// memerlukan Bearer token (akun diidentifikasi lewat field akun_speedid di body,
+// bukan lewat sesi login dashboard).
+async function monitoringPost(path: string, body: Record<string, unknown>): Promise<any> {
+  const res = await fetch(`${BASE_MONITORING}/${path}`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(body),
+  })
   if (!res.ok) throw new Error(`API ${res.status}: ${path}`)
   return res.json()
 }
@@ -150,7 +183,7 @@ async function dashboardPost(path: string, body: Record<string, unknown>, retry 
   if (res.status === 401 && retry) {
     _accessToken = null // ← invalidate dulu
     try {
-      const newToken = await doRefreshToken() // ← ini sudah panggil setTokens di dalamnya
+      await ensureFreshToken() // ← single-flight, sudah panggil setTokens di dalamnya
       return dashboardPost(path, body, false)  // ← retry dengan token baru
     } catch {
       clearTokens()
@@ -189,7 +222,7 @@ async function dashboardGet(path: string, params: Record<string, string | number
   if (res.status === 401 && retry) {
     _accessToken = null // ← invalidate dulu
     try {
-      await doRefreshToken() // ← sudah panggil setTokens di dalamnya
+      await ensureFreshToken() // ← single-flight, sudah panggil setTokens di dalamnya
       return dashboardGet(path, params, false) // ← retry
     } catch {
       clearTokens()
@@ -574,6 +607,45 @@ export async function apiUploadImage(data: {
   }
 
   return true
+}
+
+// ─── Report & Request Konten ──────────────────────────────────────────────────
+// POST https://classos-monitoring-beta.isn-speed.com/api/v1/content/report
+// POST https://classos-monitoring-beta.isn-speed.com/api/v1/content/request
+
+export async function apiReportKonten(data: {
+  id_content: string | number
+  akun_speedid: string | number
+  nama: string
+  provinsi: string | number
+  kab_kota: string | number
+  sekolah: string
+  tingkat: string
+  alasan_keliru: string
+}) {
+  return monitoringPost('v1/content/report', { ...data })
+}
+
+export async function apiRequestKonten(data: {
+  akun_speedid: string | number
+  nama: string
+  provinsi: string | number
+  kab_kota: string | number
+  sekolah: string
+  tingkat: string
+  fase: string
+  judul: string
+  penjelasan_konten: string
+  capaian_pembelajaran: string
+  tujuan_pembelajaran: string
+  link_referensi?: string
+  alasan_penting: string
+}) {
+  return monitoringPost('v1/content/request', { ...data })
+}
+
+export function clearTokenCache() {
+  _accessToken = null
 }
 
 // ─── Dashboard endpoints (dengan auth) ───────────────────────────────────────

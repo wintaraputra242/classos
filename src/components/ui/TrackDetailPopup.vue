@@ -4,6 +4,7 @@ import { computed, nextTick, onMounted, onUnmounted, ref, watch } from 'vue'
 import { usePlayerStore } from '@/stores/player'
 import { useThemeStore } from '@/stores/theme'
 import type { PlayerTrack } from '@/types';
+import ReportKontenModal from '@/components/ui/ReportKontenModal.vue'
 
 const props = defineProps<{
   modelValue: boolean
@@ -29,6 +30,9 @@ const currentTrack = computed(() => {
 })
 
 const close = () => emit('update:modelValue', false)
+
+// ✅ Report Konten
+const showReportModal = ref(false)
 
 const isiWords = computed(() => {
   const isi = (currentTrack.value as any)?.isi
@@ -830,7 +834,15 @@ onUnmounted(() => {
 
               </div>
 
-              <div v-if="currentTrack?.type !== 'lagu'" class="flex justify-end gap-2 mt-4">
+              <div v-if="currentTrack?.type !== 'lagu'" class="flex justify-between items-center gap-2 mt-4">
+                <button v-if="currentTrack" @click="showReportModal = true"
+                  class="px-3 py-2 rounded-full text-xs font-bold transition-all border flex items-center gap-1.5 border-gray-300 dark:border-zinc-600 text-gray-500 dark:text-gray-400 hover:bg-red-50 dark:hover:bg-red-500/10 hover:text-red-500 dark:hover:text-red-400 hover:border-red-300 dark:hover:border-red-500/40"
+                  title="Laporkan konten ini">
+                  <i class="ri-flag-2-line" /> Report
+                </button>
+                <div v-else />
+
+                <div class="flex gap-2">
                 <button v-if="(currentTrack as any)?.audio_url"
                   @click="() => { if (!isPreviewMode) { isUserTabSwitch = true; activeTab = 'insight' } }"
                   :disabled="isPreviewMode" class="px-4 py-2 rounded-full text-xs font-bold transition-all border"
@@ -852,6 +864,7 @@ onUnmounted(() => {
                       : 'border-gray-300 dark:border-zinc-600 text-gray-500 dark:text-gray-400 hover:bg-gray-100 dark:hover:bg-zinc-800'">
                   🎙 Podcast
                 </button>
+                </div>
               </div>
             </div>
           </div>
@@ -1033,6 +1046,9 @@ onUnmounted(() => {
             </div>
           </Transition>
         </Teleport>
+
+        <!-- Report Konten -->
+        <ReportKontenModal v-model="showReportModal" />
       </div>
 
     </Transition>
