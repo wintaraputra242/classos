@@ -696,12 +696,19 @@ async function openEndClass() {
   }
 }
 
-// ✅ Model custom deteksi orang (YOLOv8 → TFJS graph model), ditaruh guru di
-// public/models/classos-person-detection/. Signature model: input "images"
-// [1,640,640,3] float32 dinormalisasi 0-1; output [1,5,8400] = (cx,cy,w,h,conf)
-// per anchor, 1 kelas saja (person) — bukan format coco-ssd/BlazeFace, jadi
-// decode box + NMS dilakukan manual di bawah.
+// ✅ Model deteksi (YOLOX-nano dari PINTO Model Zoo: 426_YOLOX-Body-Head-Hand),
+// ditaruh guru di public/models/classos-person-detection/. Formatnya BEDA TOTAL
+// dari model custom sebelumnya — ikuti meta.json yang disertakan di folder model:
+// - Input "input" [1,416,416,3] float32, RANGE 0-255 MENTAH (jangan dibagi 255!),
+//   urutan channel BGR (tf.browser.fromPixels kasih RGB, jadi perlu di-reverse).
+// - Output "detections" [1, N, 8]: per anchor = x1,y1,x2,y2 (piksel skala 416,
+//   format pojok — BUKAN cx,cy,w,h) + 4 skor kelas [body, head, hand, face].
+//   Kita filter cuma kelas "head" (index sesuai meta.json → headClass).
+// Kalau modelnya diganti lagi nanti, cek ulang meta.json — jangan asumsikan
+// signature-nya sama kayak sebelumnya.
 const PERSON_MODEL_URL = '/models/classos-person-detection/model.json'
+const PERSON_INPUT_SIZE = 416
+const PERSON_HEAD_CLASS_INDEX = 1
 const PERSON_CONF_THRESHOLD = 0.4
 const PERSON_IOU_THRESHOLD = 0.45
 
@@ -731,7 +738,27 @@ async function loadPersonModel() {
     const tf = (window as any).tf
     if (!tf) throw new Error('TensorFlow belum dimuat')
 
+    // ✅ Pastikan pakai backend WebGL (GPU-accelerated). Kalau diam-diam jatuh ke
+    // backend 'cpu', inference akan jauh lebih berat dan bikin frame lag parah.
+    try {
+      await tf.setBackend('webgl')
+    } catch (e) {
+      console.warn('[person-detection] WebGL backend gagal, pakai default:', e)
+    }
+    await tf.ready()
+
     _personModel = await tf.loadGraphModel(PERSON_MODEL_URL)
+
+    // ✅ Warm-up — picu kompilasi shader WebGL sekali di sini (masih bagian
+    // "loading", ditandai isDetecting=true di UI), supaya tidak terjadi di
+    // tengah live detection nanti saat kamera sudah jalan. Pakai executeAsync
+    // (bukan execute) karena belum dikonfirmasi model YOLOX ini bebas dari
+    // control-flow/dynamic ops seperti model sebelumnya.
+    const warmupInput = tf.zeros([1, PERSON_INPUT_SIZE, PERSON_INPUT_SIZE, 3])
+    const warmupOutput = await _personModel.executeAsync(warmupInput)
+    warmupInput.dispose()
+    if (Array.isArray(warmupOutput)) warmupOutput.forEach((t: any) => t.dispose())
+    else warmupOutput.dispose()
   } finally {
     isDetecting.value = false
   }
@@ -760,48 +787,60 @@ function nmsBoxes(boxes: DetBox[], iouThreshold: number): DetBox[] {
   return kept
 }
 
+let _isInferring = false
+
 async function startLiveDetection() {
   if (!_personModel) await loadPersonModel()
 
   _detectInterval = setInterval(async () => {
+    // ✅ Skip tick ini kalau inference sebelumnya belum selesai — tanpa guard ini,
+    // setInterval tetap menembak tiap 500ms walau 1 inference butuh lebih lama,
+    // jadi numpuk beberapa inference jalan bersamaan rebutan GPU → lag parah.
+    if (_isInferring) return
+
     const video = endClassModalRef.value?.videoEndClassRef
     const canvas = endClassModalRef.value?.overlayCanvasRef
     const tf = (window as any).tf
     if (!video || !canvas || capturedPhoto.value || !_personModel || !tf) return
 
+    _isInferring = true
     try {
       const inputTensor = tf.tidy(() => {
-        const img = tf.browser.fromPixels(video)
-        const resized = tf.image.resizeBilinear(img, [640, 640])
-        return resized.toFloat().div(255).expandDims(0)
+        const img = tf.browser.fromPixels(video) // RGB uint8 [H,W,3]
+        const resized = tf.image.resizeBilinear(img, [PERSON_INPUT_SIZE, PERSON_INPUT_SIZE])
+        const bgr = resized.reverse(-1) // model ini dilatih/dikonversi pakai urutan channel BGR
+        return bgr.toFloat().expandDims(0) // ⚠️ TIDAK dibagi 255 — range input model ini 0-255 mentah
       })
 
       const output = await _personModel.executeAsync(inputTensor)
       inputTensor.dispose()
 
       const outputTensor = Array.isArray(output) ? output[0] : output
+      const [, numAnchors, numValuesPerAnchor] = outputTensor.shape as [number, number, number]
       const data: Float32Array = await outputTensor.data()
       if (Array.isArray(output)) output.forEach((t: any) => t.dispose())
       else output.dispose()
 
-      // Output layout [1,5,8400]: baris 0-3 = cx,cy,w,h (dalam skala 640), baris 4 = confidence
-      const numAnchors = 8400
-      const scaleX = video.videoWidth / 640
-      const scaleY = video.videoHeight / 640
+      // Output [1, numAnchors, numValuesPerAnchor]: per anchor = x1,y1,x2,y2 (piksel
+      // skala PERSON_INPUT_SIZE, format pojok) + skor per kelas mulai index 4.
+      // Kita filter cuma skor kelas "head" (PERSON_HEAD_CLASS_INDEX).
+      const scaleX = video.videoWidth / PERSON_INPUT_SIZE
+      const scaleY = video.videoHeight / PERSON_INPUT_SIZE
 
       const candidates: DetBox[] = []
       for (let i = 0; i < numAnchors; i++) {
-        const score = data[4 * numAnchors + i]!
+        const base = i * numValuesPerAnchor
+        const score = data[base + 4 + PERSON_HEAD_CLASS_INDEX]!
         if (score < PERSON_CONF_THRESHOLD) continue
-        const cx = data[0 * numAnchors + i]!
-        const cy = data[1 * numAnchors + i]!
-        const w = data[2 * numAnchors + i]!
-        const h = data[3 * numAnchors + i]!
+        const x1 = data[base + 0]!
+        const y1 = data[base + 1]!
+        const x2 = data[base + 2]!
+        const y2 = data[base + 3]!
         candidates.push({
-          x: (cx - w / 2) * scaleX,
-          y: (cy - h / 2) * scaleY,
-          w: w * scaleX,
-          h: h * scaleY,
+          x: x1 * scaleX,
+          y: y1 * scaleY,
+          w: (x2 - x1) * scaleX,
+          h: (y2 - y1) * scaleY,
           score,
         })
       }
@@ -860,12 +899,15 @@ async function startLiveDetection() {
       })
     } catch (e) {
       console.warn('[person-detection] error:', e)
+    } finally {
+      _isInferring = false
     }
   }, 500)
 }
 
 function stopLiveDetection() {
   if (_detectInterval) { clearInterval(_detectInterval); _detectInterval = null }
+  _isInferring = false // ← reset jaga-jaga kalau berhenti pas lagi di tengah inference
 
   const canvas = endClassModalRef.value?.overlayCanvasRef
   if (canvas) {
