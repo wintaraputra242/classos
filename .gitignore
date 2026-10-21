@@ -19,6 +19,9 @@ coverage
 .env.local
 .env.*.local
 
+# API key endpoint PHP standalone di public/detect/ — isi aslinya cuma ada di server
+public/detect/roboflow-config.php
+
 # Editor directories and files
 .vscode/*
 !.vscode/extensions.json

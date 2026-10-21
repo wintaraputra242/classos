@@ -10,8 +10,8 @@ const BASE_PROD = 'https://id.isn-speed.com'
 // const BASE_DASHBOARD = 'https://classos.isn-speed.com/api'
 const BASE_DASHBOARD = import.meta.env.DEV
   ? '/api-dashboard'  // ← pakai proxy saat development
-  : 'https://classos.isn-speed.com/api'
-// : 'https://classos-beta.isn-speed.com/api'
+  // : 'https://classos.isn-speed.com/api'
+  : 'https://classos-beta.isn-speed.com/api'
 
 // BASE_MONITORING : https://classos-monitoring-beta.isn-speed.com/api → report & request konten
 const BASE_MONITORING = import.meta.env.DEV
@@ -169,7 +169,7 @@ function _emitError(status: number, message: string, path: string) {
 }
 
 // Dashboard API dengan Bearer token + auto refresh
-async function dashboardPost(path: string, body: Record<string, unknown>, retry = true): Promise<any> {
+async function dashboardPost(path: string, body: Record<string, unknown>, retry = true, signal?: AbortSignal): Promise<any> {
   const token = await getValidAccessToken()
   const res = await fetch(`${BASE_DASHBOARD}/${path}`, {
     method: 'POST',
@@ -178,13 +178,14 @@ async function dashboardPost(path: string, body: Record<string, unknown>, retry 
       'Authorization': `Bearer ${token}`,
     },
     body: JSON.stringify(body),
+    signal,
   })
 
   if (res.status === 401 && retry) {
     _accessToken = null // ← invalidate dulu
     try {
       await ensureFreshToken() // ← single-flight, sudah panggil setTokens di dalamnya
-      return dashboardPost(path, body, false)  // ← retry dengan token baru
+      return dashboardPost(path, body, false, signal)  // ← retry dengan token baru
     } catch {
       clearTokens()
       _emitError(401, 'Sesi habis, silakan login kembali.', path)
@@ -367,6 +368,7 @@ export async function fetchLoncengWithLink(params: {
   lastid?: number
   news?: number
   newsChannel?: number
+  filter?: string // ✅ search konten by judul — dikirim ke backend, bukan filter client-side
 }) {
   return dashboardPost('v1/getStikernews', {
     id_user: params.id_user,
@@ -374,6 +376,7 @@ export async function fetchLoncengWithLink(params: {
     lastid: params.lastid ?? 0,
     news: params.news ?? 1,
     newsChannel: params.newsChannel ?? 7,
+    filter: params.filter ?? '',
   })
 }
 
@@ -441,8 +444,15 @@ export async function fetchAnalytics(params: {
   })
 }
 
+// ⚠️ Dipindah dari BASE_BETA (isn-speed.com, lama — ternyata sudah tidak
+// hidup, dicek langsung dapat 404) ke BASE_DASHBOARD (classos-beta), pola
+// sama persis seperti fetchLoncengWithLink/v1/getStikernews yang sudah
+// dikonfirmasi jalan di backend baru. Nama path endpoint ini BELUM
+// terverifikasi langsung (butuh auth untuk dites) — kalau 404, cek lagi nama
+// path yang benar ke tim backend, kemungkinan besar masih turunan dari
+// "getChannelStikerNews" tapi dengan prefix v1/ seperti endpoint lain.
 export async function fetchChannels(id_user?: number) {
-  return getQuery(BASE_BETA, 'getChannelStikerNews', id_user ? { id_user } : {})
+  return dashboardPost('v1/getChannelStikerNews', id_user ? { id_user } : {})
 }
 
 export async function fetchSetting(userid: number) {

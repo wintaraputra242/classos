@@ -13,6 +13,17 @@
     font-family: 'Nunito', sans-serif;
     @apply dark:bg-brand-dark bg-gray-100 dark:text-white text-gray-800;
   }
+
+  /* ✅ Emoji di-render Twemoji (lihat plugins/twemoji.ts) jadi <img>, bukan
+     karakter font — perlu CSS ukuran/alignment standar ini supaya proporsional
+     sejajar dengan teks sekitarnya (rekomendasi resmi dari dokumentasi Twemoji). */
+  img.twemoji-icon {
+    height: 1em;
+    width: 1em;
+    margin: 0 0.05em 0 0.1em;
+    vertical-align: -0.1em;
+    display: inline-block;
+  }
 }
 
 @layer components {

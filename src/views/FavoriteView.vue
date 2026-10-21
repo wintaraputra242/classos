@@ -1,6 +1,7 @@
 <script setup lang="ts">
 import { laguEdukasiData } from '@/data/mockData'
 import type { LaguEdukasi, PlayerTrack } from '@/types'
+import { parseContentTools } from '@/helpers'
 import { ref, computed, onMounted, onUnmounted, watch, nextTick } from 'vue'
 import { RouterLink, useRouter } from 'vue-router'
 import { usePlayerStore } from '@/stores/player'
@@ -60,6 +61,8 @@ function gradientFor(id: string) {
 }
 
 function mapToPlayerTrack(item: any): PlayerTrack {
+  const { questions, quiz, slides, project } = parseContentTools(item)
+
   return {
     id: String(item.id_lonceng),
     id_stikernews: item.id_lonceng,
@@ -78,6 +81,10 @@ function mapToPlayerTrack(item: any): PlayerTrack {
     isPlaying: false,
     isFavorite: false,
     link: item.podcast_url || item.audio_url,
+    questions,
+    quiz,
+    slides,
+    project,
   }
 }
 
