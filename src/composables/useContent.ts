@@ -10,6 +10,12 @@ import { usePlayerStore } from '@/stores/player'
 import { useAuthStore } from '@/stores/auth'
 import type { LoncengItem, PlayerTrack } from '@/types'
 
+/** Nama channel dari API kadang pakai "(new)" (mis. "Student: TK (new)") —
+ *  tampilkan dalam Bahasa Indonesia saja di UI, tanpa perlu minta backend ubah. */
+export function localizeChannelName(nama: string): string {
+  return nama.replace(/\(new\)/i, '(Baru)')
+}
+
 /** Emoji fallback berdasarkan index */
 const EMOJIS = ['🎵', '📰', '💡', '🌍', '❤️', '🌟', '💪', '🎯', '📚', '🔒', '🛡️', '🤝']
 export function emojiFor(item: LoncengItem) {
@@ -32,6 +38,25 @@ export function gradientFor(id: number | undefined | null) {
   return GRADIENTS[(id ?? 0) % GRADIENTS.length] as { from: string; to: string }
 }
 
+/** Ikon watermark "sekolahan" untuk corak thumbnail fallback (ClassOS = tema kelas/sekolah) */
+const SCHOOL_ICONS = [
+  'ri-book-2-fill',
+  'ri-graduation-cap-fill',
+  'ri-pencil-ruler-2-fill',
+  'ri-quill-pen-fill',
+  'ri-calculator-fill',
+  'ri-flask-fill',
+  'ri-palette-fill',
+  'ri-compasses-2-fill',
+]
+// offset dipakai untuk ambil ikon "satelit" yang beda dari ikon utama tapi
+// tetap konsisten per konten (bukan acak tiap render) — lihat corak bertebaran
+// di AllSection.vue/NewsSection.vue
+export function schoolIconFor(id: number | undefined | null, offset = 0) {
+  const base = (id ?? 0) + offset
+  return SCHOOL_ICONS[base % SCHOOL_ICONS.length] as string
+}
+
 /** Konversi LoncengItem → PlayerTrack */
 export function loncengToTrack(item: LoncengItem): PlayerTrack {
   console.log(item);
@@ -42,6 +67,7 @@ export function loncengToTrack(item: LoncengItem): PlayerTrack {
     id_channel: item.id_channel,
     title: item.title,
     subtitle: item.channel_name ?? `Channel ${item.id_channel}`,
+    channel_name: item.channel_name ?? '',
     emoji: emojiFor(item) ?? '🎵',
     duration: item.duration ?? '1:00',
     duration_podcast: item.duration_podcast ?? '1:00',

@@ -11,17 +11,23 @@ export interface Token {
 }
 
 // ===== API: CHANNEL =====
+// ✅ Field disesuaikan dengan response terbaru backend classos-beta — field
+// lama (nama_channel, deskripsi) sudah tidak dipakai lagi, diganti nama &
+// description. Bukti: object "selectedChannel" di response v1/getStikernews
+// sekarang berbentuk { id_channel, nama, description, category }.
 export interface Channel {
   id_channel: number
-  nama_channel: string
-  deskripsi?: string
-  jenjang?: string
+  nama: string
+  description?: string
+  category?: number
+  is_hotnews?: number
   thumbnail?: string
 }
 
 // ===== API: LONCENG / KONTEN =====
 export interface LoncengItem {
   id: number | string
+  id_lonceng?: number
   id_stikernews: number
   id_channel: number
   title: string
@@ -113,7 +119,44 @@ export interface PlayerTrack {
   isPlaying: boolean
   isFavorite: boolean
   link?: string             // URL stream
+  // ===== TOOLS KONTEN: Question / Quiz / Slide / Projek =====
+  // Sudah dalam bentuk ter-parse & ter-mapping (lihat parseContentTools di
+  // helpers/index.ts) — field mentah dari API (pertanyaan, quiz, project,
+  // slide_urls) berupa string JSON ber-Bahasa Indonesia, BEDA bentuk dari
+  // tipe-tipe di bawah ini.
+  questions?: ContentQuestion[]
+  quiz?: ContentQuiz[]
+  slides?: string[]
+  project?: ContentProject
 }
+
+export interface ContentQuestion {
+  question: string
+  answer: string
+}
+
+export interface ContentQuiz {
+  question: string
+  options: string[]
+  correct_index: number
+  explanation?: string
+}
+
+/** Field mengikuti struktur asli "project" dari API (judul→title, dst),
+ *  lihat parseContentTools di helpers/index.ts untuk mapping-nya. */
+export interface ContentProject {
+  title: string
+  objective?: string         // dari "tujuan"
+  description?: string       // dari "deskripsi"
+  steps?: string[]           // dari "langkah"
+  tools?: string[]           // dari "alat_bahan"
+  result?: string            // dari "hasil_akhir"
+  duration?: string          // dari "estimasi_waktu"
+  successCriteria?: string[] // dari "kriteria_keberhasilan"
+}
+
+// ===== SESI KELAS =====
+export type StepKey = 'briefing' | 'listening' | 'summary' | 'endclass'
 
 // ===== APP STATE =====
 export type ThemeMode = 'dark' | 'light'

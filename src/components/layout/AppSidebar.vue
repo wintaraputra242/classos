@@ -8,6 +8,11 @@ import type { Jenjang } from '@/types'
 import { defineComponent, h } from 'vue'
 import { useAuthStore } from '@/stores/auth'
 
+const emit = defineEmits<{
+  'show-premium': []
+  'show-skp': []
+}>()
+
 const makeIcon = (pathD: string, filled = false) =>
   defineComponent({ render: () => h('svg', { fill: filled ? 'currentColor' : 'none', stroke: filled ? undefined : 'currentColor', viewBox: '0 0 24 24' }, [h('path', { 'stroke-linecap': 'round', 'stroke-linejoin': 'round', 'stroke-width': '2', d: pathD })]) })
 
@@ -128,7 +133,7 @@ function formatDate(dateStr: string) {
         </div> -->
       </div>
 
-      <div v-if="authStore.isTrial"
+      <!-- <div v-if="authStore.isTrial"
         class="mx-1 mt-4 mb-3 px-3 py-2 rounded-lg bg-blue-50 dark:bg-blue-950/30 border border-blue-200 dark:border-blue-800">
         <p class="text-xs font-semibold text-blue-700 dark:text-blue-300">
           Mode Trial
@@ -136,6 +141,28 @@ function formatDate(dateStr: string) {
         <p class="text-[11px] text-blue-600 dark:text-blue-400">
           Akun ini menggunakan akses percobaan.
         </p>
+      </div> -->
+
+      <div
+        class="mx-1 mb-3 px-3 py-3 rounded-xl bg-blue-50 dark:bg-blue-950/30 border border-blue-200 dark:border-blue-800">
+        <div class="mb-1.5">
+          <p class="text-xs font-semibold text-blue-700 dark:text-blue-300">
+            Mode {{ authStore.isTrial ? 'Trial' : 'Premium' }}
+          </p>
+        </div>
+        <p class="text-[10px] dark:text-gray-500 text-gray-400 mb-1">Expire until</p>
+        <p class="text-xs font-bold dark:text-white text-gray-800 mb-1">
+          {{ authStore.expiredDate ? formatDate(authStore.expiredDate) : '—' }}
+        </p>
+        <!-- <div class="flex items-center gap-1.5">
+          <span class="text-[10px] font-bold px-2 py-0.5 rounded-full" :class="Number(authStore.estimationDay) <= 7
+            ? 'bg-red-100 dark:bg-red-950/40 text-red-500'
+            : Number(authStore.estimationDay) <= 30
+              ? 'bg-yellow-100 dark:bg-yellow-950/40 text-yellow-500'
+              : 'bg-green-100 dark:bg-green-950/40 text-green-600 dark:text-green-400'">
+            {{ Number(authStore.estimationDay) > 0 ? `${authStore.estimationDay} hari lagi` : 'Sudah kadaluarsa' }}
+          </span>
+        </div> -->
       </div>
 
       <!-- Sponsor -->
@@ -184,39 +211,85 @@ function formatDate(dateStr: string) {
         </div>
 
         <!-- Hisense -->
-        <div class="pt-3 border-t dark:border-gray-800 border-gray-100">
+        <!-- <div class="pt-3 border-t dark:border-gray-800 border-gray-100">
           <p class="text-xs dark:text-gray-500 text-gray-400 mb-1">Support by</p>
           <div class="text-brand-blue font-black text-xl font-poppins">Hisense</div>
           <div class="text-sm font-bold dark:text-gray-300 text-gray-700">Smart Board</div>
-        </div>
+        </div> -->
 
         <!-- <div class="text-xs dark:text-gray-500 text-gray-500">Mendukung Pendidikan<br>Cerdas Indonesia</div> -->
       </div>
 
       <!-- Token Info -->
-      <div
-        class="mx-1 mb-3 px-3 py-3 rounded-xl border dark:border-gray-700 border-gray-200 dark:bg-[#1e1e1e] bg-gray-50">
-        <div class="flex items-center justify-between mb-1.5">
-          <p class="text-[10px] font-bold uppercase tracking-wider dark:text-gray-400 text-gray-500">Token Sekolah</p>
-          <a :href="`https://wa.me/6282146633466?text=${encodeURIComponent('Halo, saya ingin mendapatkan token baru untuk ClassOS.')}`"
-            target="_blank"
-            class="text-[10px] font-bold text-brand-red dark:text-brand-green hover:underline transition-colors">
-            Get New Token
-          </a>
+      <!-- Token Info / Premium buttons -->
+      <div class="mx-1 mb-3 flex flex-col gap-4">
+
+        <!-- Tombol 1: Tingkatkan ke ClassOS Premium -->
+        <div class="relative" style="width: calc(100% - 10px);">
+          <!-- Bintang pojok kanan atas -->
+          <div
+            class="absolute -top-2 -right-2 z-10 w-5 h-5 rounded-full bg-yellow-400 flex items-center justify-center shadow-md">
+            <i class="ri-star-fill text-[10px] text-yellow-900" />
+          </div>
+
+          <button @click="emit('show-premium')"
+            class="w-full px-3 py-2.5 rounded-xl text-left transition-opacity hover:opacity-90 overflow-hidden relative"
+            style="background: linear-gradient(135deg, #1a1a2e 0%, #16213e 40%, #0f3460 100%);">
+
+            <!-- Dekorasi lingkaran background -->
+            <div class="absolute -right-4 -bottom-4 w-16 h-16 rounded-full bg-yellow-400/10" />
+            <div class="absolute -right-2 -top-4 w-10 h-10 rounded-full bg-blue-500/10" />
+
+            <div class="flex items-center gap-2 relative z-10">
+              <div
+                class="w-7 h-7 rounded-lg bg-yellow-400/20 border border-yellow-400/30 flex items-center justify-center flex-shrink-0">
+                <i class="ri-vip-crown-2-fill text-yellow-400 text-sm" />
+              </div>
+              <div>
+                <p class="text-[9px] text-gray-400 leading-none mb-0.5">Akses Lebih Banyak Fitur</p>
+                <p class="text-[10px] font-extrabold leading-tight">
+                  <span class="text-yellow-400">TINGKATKAN KE</span>
+                  <span class="text-white"> CLASSOS PREMIUM</span>
+                </p>
+              </div>
+            </div>
+
+          </button>
         </div>
-        <p class="text-[10px] dark:text-gray-500 text-gray-400 mb-1">Expire until</p>
-        <p class="text-xs font-bold dark:text-white text-gray-800 mb-1">
-          {{ authStore.expiredDate ? formatDate(authStore.expiredDate) : '—' }}
-        </p>
-        <div class="flex items-center gap-1.5">
-          <span class="text-[10px] font-bold px-2 py-0.5 rounded-full" :class="Number(authStore.estimationDay) <= 7
-            ? 'bg-red-100 dark:bg-red-950/40 text-red-500'
-            : Number(authStore.estimationDay) <= 30
-              ? 'bg-yellow-100 dark:bg-yellow-950/40 text-yellow-500'
-              : 'bg-green-100 dark:bg-green-950/40 text-green-600 dark:text-green-400'">
-            {{ Number(authStore.estimationDay) > 0 ? `${authStore.estimationDay} hari lagi` : 'Sudah kadaluarsa' }}
-          </span>
+
+        <!-- Tombol 2: Solusi Kelas Pintar -->
+        <div class="relative" style="width: calc(100% - 10px);">
+          <!-- Bintang pojok kanan atas -->
+          <div
+            class="absolute -top-2 -right-2 z-10 w-5 h-5 rounded-full bg-yellow-400 flex items-center justify-center shadow-md">
+            <i class="ri-star-fill text-[10px] text-yellow-900" />
+          </div>
+
+          <button @click="emit('show-skp')"
+            class="w-full px-3 py-2.5 rounded-xl text-left transition-opacity hover:opacity-90 overflow-hidden relative"
+            style="background: linear-gradient(135deg, #0f2027 0%, #203a43 50%, #2c5364 100%);">
+
+            <!-- Dekorasi lingkaran background -->
+            <div class="absolute -right-4 -bottom-4 w-16 h-16 rounded-full bg-brand-green/10" />
+            <div class="absolute -right-2 -top-4 w-10 h-10 rounded-full bg-blue-500/10" />
+
+            <div class="flex items-center gap-2 relative z-10">
+              <div
+                class="w-7 h-7 rounded-lg bg-brand-green/20 border border-brand-green/30 flex items-center justify-center flex-shrink-0">
+                <i class="ri-tv-2-line text-brand-green text-sm" />
+              </div>
+              <div>
+                <p class="text-[9px] text-gray-400 leading-none mb-0.5">Program Unggulan</p>
+                <p class="text-[10px] font-extrabold leading-tight">
+                  <span class="text-brand-green">SOLUSI</span>
+                  <span class="text-white"> KELAS PINTAR</span>
+                </p>
+              </div>
+            </div>
+
+          </button>
         </div>
+
       </div>
     </nav>
   </aside>

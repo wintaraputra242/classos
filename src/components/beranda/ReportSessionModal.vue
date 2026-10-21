@@ -1,5 +1,7 @@
 <!-- components/beranda/SessionReportModal.vue -->
 <script setup lang="ts">
+type ScoreTier = 'low' | 'mid' | 'high'
+
 defineProps<{
   modelValue: boolean
   capturedPhoto?: string | null
@@ -12,6 +14,7 @@ defineProps<{
   sessionScoreReason?: string
   scoreAnimating?: boolean
   showScoreReason?: boolean
+  scoreTier: ScoreTier
 }>()
 
 defineEmits<{
@@ -35,6 +38,24 @@ function formatClockTime(iso: string | null | undefined): string {
 function sanitizeAiText(text: string | undefined): string {
   if (!text) return ''
   return text.replace(/[*#`]/g, '').trim()
+}
+
+const scoreTierConfig: Record<ScoreTier, { color: string; glow: string; icon: string }> = {
+  low: {
+    color: 'text-orange-500 dark:text-orange-400',
+    glow: 'shadow-[0_0_40px_-8px_rgba(249,115,22,0.5)]',
+    icon: 'ri-emotion-normal-line',
+  },
+  mid: {
+    color: 'text-blue-500 dark:text-blue-400',
+    glow: 'shadow-[0_0_40px_-8px_rgba(59,130,246,0.5)]',
+    icon: 'ri-emotion-happy-line',
+  },
+  high: {
+    color: 'text-brand-red dark:text-brand-green',
+    glow: 'shadow-[0_0_50px_-6px_rgba(34,197,94,0.6)] dark:shadow-[0_0_50px_-6px_rgba(29,185,84,0.6)]',
+    icon: 'ri-trophy-fill',
+  },
 }
 </script>
 
@@ -118,16 +139,32 @@ function sanitizeAiText(text: string | undefined): string {
 
                 <!-- Kolom kanan: Score -->
                 <div
-                  class="flex flex-col items-center justify-center py-4 rounded-2xl dark:bg-zinc-800/60 bg-gray-50 border dark:border-zinc-700 border-gray-100">
+                  class="flex flex-col items-center justify-center py-6 rounded-2xl dark:bg-zinc-800/60 bg-gray-50 border dark:border-zinc-700 border-gray-100 transition-shadow duration-700"
+                  :class="!scoreAnimating && scoreTierConfig[scoreTier].glow">
+
                   <p class="text-[10px] font-bold uppercase tracking-wider dark:text-gray-500 text-gray-400 mb-1">
                     Skor Sesi
                   </p>
+
+                  <!-- Icon tier, muncul begitu settle -->
+                  <Transition name="fade">
+                    <i v-if="!scoreAnimating"
+                      :class="[scoreTierConfig[scoreTier].icon, scoreTierConfig[scoreTier].color]"
+                      class="text-2xl mb-1" />
+                  </Transition>
+
                   <div class="relative flex items-center justify-center">
-                    <span class="font-mono font-black leading-none transition-colors"
-                      :class="scoreAnimating ? 'text-6xl dark:text-gray-400 text-gray-400' : 'text-7xl text-brand-red dark:text-brand-green'">
+                    <span class="font-mono font-black leading-none transition-colors duration-500"
+                      :class="scoreAnimating ? 'text-6xl dark:text-gray-400 text-gray-400' : `text-7xl ${scoreTierConfig[scoreTier].color}`">
                       {{ animatedScoreDisplay }}
                     </span>
                     <span class="text-lg font-bold dark:text-gray-500 text-gray-400 ml-1 mt-6">/100</span>
+                  </div>
+
+                  <!-- Efek tambahan untuk skor tinggi (Mantap) -->
+                  <div v-if="!scoreAnimating && scoreTier === 'high'" class="flex gap-1 mt-2">
+                    <span v-for="i in 5" :key="i" class="text-sm sparkle"
+                      :style="{ animationDelay: `${i * 0.15}s` }">✨</span>
                   </div>
 
                   <Transition name="fade">
@@ -158,3 +195,24 @@ function sanitizeAiText(text: string | undefined): string {
     </Transition>
   </Teleport>
 </template>
+
+<style scoped>
+.sparkle {
+  display: inline-block;
+  animation: sparklePop 1.2s ease-in-out infinite;
+}
+
+@keyframes sparklePop {
+
+  0%,
+  100% {
+    transform: scale(0.8) translateY(0);
+    opacity: 0.6;
+  }
+
+  50% {
+    transform: scale(1.2) translateY(-4px);
+    opacity: 1;
+  }
+}
+</style>

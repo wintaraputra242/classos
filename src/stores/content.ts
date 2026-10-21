@@ -26,7 +26,8 @@ export const useContentStore = defineStore('content', () => {
   const errorDetailPlaylist = ref<string | null>(null)
   const activeChannelId = ref<number>(7)    // default channel 7 (sesuai Postman)
   const lastId = ref(0)                     // cursor pagination
-  const edukasiSongs = ref<{ id: number; url_audio: string; img_url: string, isi: string, judul: string }[]>([])
+  const searchFilter = ref('')              // search by judul — dikirim ke backend (param "filter")
+  const edukasiSongs = ref<{ id: number; url_audio: string; img_url: string, isi: string, judul: string, durasi?: string }[]>([])
   const hasMore = ref(true)
   const LIMIT = 20 // sesuaikan dengan limit backend
 
@@ -91,7 +92,16 @@ export const useContentStore = defineStore('content', () => {
         id_user: userId,
         newsChannel: channel,
         lastid: lastId.value,
+        filter: searchFilter.value,
       })
+
+      // ✅ Response terbaru selalu balas HTTP 200 tapi sertakan flag error
+      // eksplisit ({ error: true/false, message }) — tanpa cek ini, error
+      // dari backend (mis. id_user tidak valid) diam-diam dianggap sukses
+      // dengan list kosong.
+      if (data?.error === true) {
+        throw new Error(data?.message || 'Gagal memuat konten dari server')
+      }
 
       const list: LoncengItem[] = Array.isArray(data)
         ? data
@@ -150,8 +160,23 @@ export const useContentStore = defineStore('content', () => {
   async function loadChannels(userId?: number) {
     try {
       const data = await fetchChannels(userId)
-      const list: Channel[] = Array.isArray(data) ? data : (data?.data ?? [])
-      if (list.length) channels.value = list
+
+      if (data?.error === true) {
+        console.warn('[content] loadChannels failed:', data?.message)
+        return
+      }
+
+      // ✅ Response terbaru nested: { data: { default_channel, channels: [...] } }
+      // — bukan array langsung di data.data seperti asumsi lama.
+      const list: Channel[] = Array.isArray(data)
+        ? data
+        : (data?.data?.channels ?? data?.data ?? [])
+
+      // ✅ ClassOS cuma pakai channel kategori 2 ("Student: SD/SMP/SMA/SMK", dst) —
+      // kategori 0 (berita nasional/internasional) & 1 (sport/ekonomi/entertainment/ASN)
+      // bukan untuk konteks sekolah ini.
+      const studentChannels = list.filter(c => c.category === 2)
+      if (studentChannels.length) channels.value = studentChannels
     } catch (e) {
       console.warn('[content] loadChannels failed:', e)
     }
@@ -167,6 +192,15 @@ export const useContentStore = defineStore('content', () => {
   async function loadMore(userId: number) {
     if (loading.value) return
     await loadContent(userId, activeChannelId.value, false)
+  }
+
+  /** Search konten by judul — kirim ke backend (param "filter"), bukan filter
+   *  client-side, supaya hasil cari mencakup seluruh konten, bukan cuma yang
+   *  kebetulan sudah ke-load lewat infinite scroll. Reset pagination karena
+   *  ini query baru. */
+  async function searchContent(userId: number, query: string) {
+    searchFilter.value = query.trim()
+    await loadContent(userId, activeChannelId.value, true)
   }
 
   async function loadFavoriteContent(userTeacherId: string) {
@@ -257,8 +291,8 @@ export const useContentStore = defineStore('content', () => {
 
   return {
     items, edukasiSongs, channels, loading, error,
-    activeChannelId, activeChannel,
+    activeChannelId, activeChannel, searchFilter,
     todayItems, randomItems, loadingFavorite, loadingDetailPlaylist, errorFavorite, loadingPlaylist, favoriteItems, playlistItems, detailPlaylistItems, hasMore,
-    loadContent, loadChannels, switchChannel, loadMore, loadFavoriteContent, loadPlaylistContent, loadDetailPlaylistContent
+    loadContent, loadChannels, switchChannel, loadMore, searchContent, loadFavoriteContent, loadPlaylistContent, loadDetailPlaylistContent
   }
 })

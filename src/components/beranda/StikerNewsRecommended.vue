@@ -7,7 +7,6 @@ import { gradientFor } from '@/composables/useContent'
 
 const props = defineProps<{
   apiRandomItems: any[]
-  localRandomNews: any[]
   loading?: boolean
   channelItems: Record<number, string>
 }>()
@@ -19,19 +18,6 @@ const emit = defineEmits<{
 
 const themeStore = useThemeStore()
 const playerStore = usePlayerStore()
-
-const localGradients: any = [
-  { from: '#1e3a5f', to: '#1a73e8' },
-  { from: '#1a3a2a', to: '#1DB954' },
-  { from: '#5f3a0d', to: '#f59e0b' },
-  { from: '#5f1a1a', to: '#ef4444' },
-  { from: '#3a1a5f', to: '#8b5cf6' },
-]
-
-function localGradient(id: string) {
-  const idx = id.charCodeAt(id.length - 1) % localGradients.length
-  return localGradients[idx]
-}
 
 function formatWaktu(waktu: string): string {
   if (!waktu) return '—'
@@ -180,19 +166,15 @@ function formatTime(secs: number): string {
       </div>
     </div>
 
-    <!-- Fallback lokal -->
-    <div v-else class="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-5 gap-3">
-      <div v-for="item in localRandomNews" :key="item.id"
-        class="card-hover dark:bg-[#1e1e1e] bg-white rounded-xl overflow-hidden border dark:border-gray-800 border-gray-100 cursor-pointer group">
-        <div class="aspect-video flex items-center justify-center text-4xl"
-          :style="{ background: `linear-gradient(135deg, ${localGradient(item.id).from}, ${localGradient(item.id).to})` }">
-          {{ item.emoji }}
-        </div>
-        <div class="p-2.5">
-          <p class="text-xs font-bold dark:text-white text-gray-900 leading-snug line-clamp-2">{{ item.title }}</p>
-          <p class="text-[10px] dark:text-gray-500 text-gray-400 mt-1">{{ item.jenjang[0] }} • {{ item.duration }}</p>
-        </div>
-      </div>
+    <!-- ✅ Empty state — sebelumnya di sini fallback ke localRandomNews (data
+         mock statis dengan emoji "❓"), yang kelihatan seperti bug/konten rusak
+         saat kategori yang dipilih memang belum ada kontennya dari API. -->
+    <div v-else class="flex flex-col items-center py-10 text-center">
+      <i class="ri-newspaper-line text-4xl dark:text-gray-700 text-gray-300 mb-2" />
+      <p class="text-sm font-bold dark:text-gray-500 text-gray-400">
+        Belum ada konten untuk kategori ini
+      </p>
+      <p class="text-xs dark:text-gray-600 text-gray-400 mt-0.5">Coba pilih kategori lain di atas</p>
     </div>
   </div>
 </template>

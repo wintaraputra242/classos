@@ -47,10 +47,27 @@ export const useClassSessionStore = defineStore('classSession', () => {
   const summarize = ref<StreamState>(_initStreamState())
   let _summarizeController: AbortController | null = null
 
+  const SUMMERIZE_CACHE_KEY = 'classos_summarize_cache'
+
   async function runSummarize(transcript: string) {
     if (!sessionId.value) {
       summarize.value.error = 'session_id belum diset'
       return
+    }
+
+    // ✅ Cek cache dulu — kalau sudah ada summarize untuk session ini, pakai itu
+    try {
+      const cached = localStorage.getItem(SUMMERIZE_CACHE_KEY)
+      if (cached) {
+        const { text, sessionId: cachedSessionId } = JSON.parse(cached)
+        if (cachedSessionId === sessionId.value && text) {
+          summarize.value = { ..._initStreamState(), text, done: true }
+          _patchSessionState({ summarize: { text, done: true } })
+          return
+        }
+      }
+    } catch {
+      // localStorage rusak/tidak valid, abaikan cache, lanjut request normal
     }
 
     _summarizeController?.abort()
@@ -64,7 +81,18 @@ export const useClassSessionStore = defineStore('classSession', () => {
         { session_id: sessionId.value, transcript },
         (_delta, fullText) => {
           summarize.value.text = fullText
-          _patchSessionState({ summarize: { text: fullText, done: false } }) // ✅ selalu baca localStorage terbaru
+          _patchSessionState({ summarize: { text: fullText, done: false } })
+
+          // ✅ Simpan ke cache per-session
+          try {
+            localStorage.setItem(SUMMERIZE_CACHE_KEY, JSON.stringify({
+              text: fullText,
+              sessionId: sessionId.value,
+              savedAt: Date.now(),
+            }))
+          } catch {
+            // storage penuh/gagal, abaikan
+          }
         },
         _summarizeController.signal
       )
@@ -86,11 +114,27 @@ export const useClassSessionStore = defineStore('classSession', () => {
   // ── Brief (streaming) ─────────────────────────────────────
   const brief = ref<StreamState>(_initStreamState())
   let _briefController: AbortController | null = null
+  const BRIEF_CACHE_KEY = 'classos_brief_cache'
 
   async function runBrief(playlistId: string, teacherId: string) {
     if (!sessionId.value) {
       brief.value.error = 'session_id belum diset'
       return
+    }
+
+    // ✅ Cek cache dulu — kalau playlist yang sama pernah di-briefing sebelumnya, pakai itu
+    try {
+      const cached = localStorage.getItem(BRIEF_CACHE_KEY)
+      if (cached) {
+        const { text, playlistId: cachedId } = JSON.parse(cached)
+        if (cachedId === playlistId && text) {
+          brief.value = { ..._initStreamState(), text, done: true }
+          _patchSessionState({ brief: { text, done: true } })
+          return // pakai cache, tidak perlu request ulang
+        }
+      }
+    } catch {
+      // localStorage rusak/tidak valid, abaikan cache, lanjut request normal
     }
 
     _briefController?.abort()
@@ -104,7 +148,18 @@ export const useClassSessionStore = defineStore('classSession', () => {
         { session_id: sessionId.value, playlist_id: playlistId, teacher_id: teacherId },
         (_delta, fullText) => {
           brief.value.text = fullText
-          _patchSessionState({ brief: { text: fullText, done: false } }) // ✅ selalu baca localStorage terbaru
+          _patchSessionState({ brief: { text: fullText, done: false } })
+
+          // ✅ Simpan juga ke cache per-playlist, biar bisa dipakai ulang di sesi lain
+          try {
+            localStorage.setItem(BRIEF_CACHE_KEY, JSON.stringify({
+              text: fullText,
+              playlistId,
+              savedAt: Date.now(),
+            }))
+          } catch {
+            // storage penuh/gagal, abaikan — tidak fatal untuk jalannya stream
+          }
         },
         _briefController.signal
       )
@@ -248,6 +303,8 @@ export const useClassSessionStore = defineStore('classSession', () => {
     listening.value = { loading: false, error: null, result: null }
     evaluate.value = { loading: false, error: null, result: null }
     stopClassState.value = { loading: false, error: null, result: null, finalImageUrl: null } // ← tambahkan
+    localStorage.removeItem(BRIEF_CACHE_KEY)
+    localStorage.removeItem(SUMMERIZE_CACHE_KEY)
   }
 
   return {

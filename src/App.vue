@@ -18,7 +18,7 @@ themeStore.apply()
 const route = useRoute()
 
 const { errors, dismiss, register, unregister } = useApiError()
-const { checkAndGuard } = useSessionGuard()
+const { checkAndGuard, forceLogout } = useSessionGuard()
 const { isOnline, isRetrying } = useNetworkStatus()
 const { formatDate } = useDate()
 
@@ -46,7 +46,9 @@ const errorReload = () => {
 
 onMounted(() => {
   guardCheck()
-  register()
+  // Kalau ada request yang balas 401 (token/refresh token sudah mati total),
+  // langsung logout paksa + redirect ke /login lewat useSessionGuard
+  register(() => forceLogout())
   document.addEventListener('visibilitychange', onVisibilityChange)
 })
 
@@ -58,14 +60,14 @@ onUnmounted(() => {
 
 <template>
   <!-- Popup versi baru -->
-  <Transition name="fade">
+  <!-- <Transition name="fade">
     <div v-if="hasNewVersion"
       class="fixed inset-0 z-[99998] flex items-center justify-center p-4 bg-black/40 backdrop-blur-sm">
 
       <div
         class="w-full max-w-sm rounded-2xl shadow-2xl overflow-hidden dark:bg-zinc-900 bg-white border dark:border-zinc-700 border-gray-200">
 
-        <!-- Animated gradient header -->
+        Animated gradient header
         <div
           class="relative h-28 flex flex-col items-center justify-center bg-gradient-to-br from-brand-red to-pink-500 dark:from-brand-green dark:to-emerald-400 overflow-hidden">
           <div class="absolute w-24 h-24 rounded-full bg-white/10 -top-6 -left-6 animate-ping"
@@ -79,11 +81,11 @@ onUnmounted(() => {
           <p class="text-white text-xs font-bold tracking-widest uppercase opacity-80">Update Tersedia</p>
         </div>
 
-        <!-- Content -->
+        Content
         <div class="p-5 text-center">
           <h3 class="text-base font-black dark:text-white text-gray-900 mb-1">Versi Terbaru Telah Dirilis!</h3>
 
-          <!-- Versi & tanggal rilis -->
+          Versi & tanggal rilis
           <div class="flex items-center justify-center gap-2 mb-3">
             <span v-if="newVersion"
               class="flex items-center gap-1 text-xs font-bold dark:bg-zinc-800 bg-gray-100 dark:text-brand-green text-brand-red px-3 py-1 rounded-full">
@@ -112,7 +114,7 @@ onUnmounted(() => {
         </div>
       </div>
     </div>
-  </Transition>
+  </Transition> -->
 
   <Transition name="fade">
     <div v-if="!isOnline"
@@ -155,7 +157,7 @@ onUnmounted(() => {
       </div>
 
       <!-- Tombol retry manual -->
-      <button @click="window.location.reload()"
+      <button @click="errorReload"
         class="flex items-center gap-2 px-6 py-3 rounded-2xl bg-brand-red dark:bg-brand-green text-white text-sm font-bold hover:opacity-80 transition-opacity">
         <i class="ri-refresh-line" />
         Coba Sekarang
@@ -180,22 +182,22 @@ onUnmounted(() => {
 
         <!-- Icon -->
         <div class="w-9 h-9 rounded-full bg-red-100 dark:bg-red-950/40 flex items-center justify-center flex-shrink-0">
-          <i class="ri-signal-wifi-error-line text-base text-red-500" />
+          <i class="text-base text-red-500" :class="error.status === 401 ? 'ri-lock-2-line' : 'ri-signal-wifi-error-line'" />
         </div>
 
         <!-- Text -->
         <div class="flex-1 min-w-0">
           <p class="text-xs font-bold dark:text-white text-gray-900 mb-0.5">
-            Koneksi Bermasalah
+            {{ error.status === 401 ? 'Sesi Berakhir' : 'Terjadi Kesalahan' }}
           </p>
           <p class="text-[11px] dark:text-gray-400 text-gray-500 leading-relaxed">
-            Gagal memuat sebagian data. Coba muat ulang halaman.
+            {{ error.message || 'Gagal memuat sebagian data. Coba muat ulang halaman.' }}
           </p>
         </div>
 
         <!-- Actions -->
         <div class="flex items-center gap-1.5 flex-shrink-0">
-          <button @click="errorReload"
+          <button v-if="error.status !== 401" @click="errorReload"
             class="flex items-center gap-1 px-2.5 py-1.5 rounded-lg bg-brand-red dark:bg-brand-green text-white text-[10px] font-bold hover:opacity-80 transition-opacity">
             <i class="ri-refresh-line text-[10px]" />
             Muat Ulang
@@ -248,5 +250,26 @@ onUnmounted(() => {
   100% {
     width: 100%;
   }
+}
+
+@keyframes shrink {
+  0% {
+    width: 100%;
+  }
+
+  100% {
+    width: 0%;
+  }
+}
+
+.toast-enter-active,
+.toast-leave-active {
+  transition: all 0.3s ease;
+}
+
+.toast-enter-from,
+.toast-leave-to {
+  opacity: 0;
+  transform: translateX(100%);
 }
 </style>

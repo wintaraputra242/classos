@@ -5,13 +5,13 @@ import { useThemeStore } from '@/stores/theme'
 import { usePlayerStore } from '@/stores/player'
 import { useContentStore } from '@/stores/content'
 import { useAuthStore } from '@/stores/auth'
-import { useContent, gradientFor, emojiFor } from '@/composables/useContent'
-import { stikerNewsData, karakterData, getRandomItems } from '@/data/mockData'
-import type { PlayerTrack } from '@/types'
+import { useContent, gradientFor, emojiFor, localizeChannelName } from '@/composables/useContent'
+import { karakterData } from '@/data/mockData'
+import type { PlayerTrack, StepKey } from '@/types'
 import jsQR from 'jsqr'
 import TrackDetailPopup from '@/components/ui/TrackDetailPopup.vue'
 import * as faceapi from 'face-api.js'
-import { generateSessionId, sanitizeAiText } from '@/helpers'
+import { generateSessionId, sanitizeAiText, parseContentTools } from '@/helpers'
 import { useClassSessionStore } from '@/stores/classSession'
 import BriefingModal from '@/components/beranda/BriefingModal.vue'
 import ListeningModal from '@/components/beranda/ListeningModal.vue'
@@ -24,6 +24,8 @@ import HeroSlider from '@/components/beranda/HeroSlider.vue'
 import EducationSongSection from '@/components/beranda/EducationSongSection.vue'
 import StikerNewsRecommended from '@/components/beranda/StikerNewsRecommended.vue'
 import TeacherModeSection from '@/components/beranda/TeacherModeSection.vue'
+// import * as cocoSsd from '@tensorflow-models/coco-ssd'
+// import '@tensorflow/tfjs'
 
 const router = useRouter()
 const themeStore = useThemeStore()
@@ -33,8 +35,34 @@ const classSession = useClassSessionStore()
 const auth = useAuthStore()
 const { playItem, setItem } = useContent()
 
-// ── Fallback lokal ─────────────────────────────────────────────────────────
-const localRandomNews = computed(() => getRandomItems(stikerNewsData, 5))
+async function switchChannel(channelId: number) {
+  await contentStore.switchChannel(channelId, auth.userId)
+}
+
+// ✅ Tombol panah untuk scroll horizontal daftar kategori — sama persis
+// dengan StikerNewsView.vue, biar konsisten. Otomatis disable di ujung
+// kiri/kanan (canScrollLeft/Right dicek ulang tiap channels berubah & tiap
+// scroll manual).
+const channelScrollRef = ref<HTMLElement | null>(null)
+const canScrollLeft = ref(false)
+const canScrollRight = ref(false)
+
+function updateChannelScrollState() {
+  const el = channelScrollRef.value
+  if (!el) return
+  canScrollLeft.value = el.scrollLeft > 4
+  canScrollRight.value = el.scrollLeft < el.scrollWidth - el.clientWidth - 4
+}
+
+function scrollChannels(direction: 'left' | 'right') {
+  const el = channelScrollRef.value
+  if (!el) return
+  el.scrollBy({ left: direction === 'left' ? -200 : 200, behavior: 'smooth' })
+}
+
+watch(() => contentStore.channels.length, () => {
+  nextTick(updateChannelScrollState)
+})
 
 let _cachedDisplayed: typeof karakterData = []
 
@@ -113,6 +141,8 @@ function mapToPlayerTrack(item: any): PlayerTrack {
     audio_url: item.audio_url,
   })
 
+  const { questions, quiz, slides, project } = parseContentTools(item)
+
   return {
     id: String(item.id_lonceng),
     id_stikernews: item.id_lonceng,
@@ -131,6 +161,10 @@ function mapToPlayerTrack(item: any): PlayerTrack {
     isPlaying: false,
     isFavorite: false,
     link: item.podcast_url || item.audio_url,
+    questions,
+    quiz,
+    slides,
+    project,
   }
 }
 
@@ -374,16 +408,26 @@ async function startCamera() {
   cameraError.value = ''
 
   const constraints = [
-    { video: { width: { ideal: 1920 }, height: { ideal: 1080 } } },
-    { video: { width: { ideal: 1280 }, height: { ideal: 720 } } },
-    { video: { width: { min: 640 }, height: { min: 480 } } },
+    // ← 720p sudah cukup untuk QR scan, tidak perlu 1080p
+    { video: { width: { ideal: 1280 }, height: { ideal: 720 }, facingMode: 'environment' } },
+    { video: { width: { ideal: 640 }, height: { ideal: 480 }, facingMode: 'environment' } },
+    { video: { facingMode: 'environment' } },
     { video: true },
   ]
 
   for (const constraint of constraints) {
     try {
       cameraStream = await navigator.mediaDevices.getUserMedia(constraint)
-      if (videoRef.value) videoRef.value.srcObject = cameraStream
+
+      if (videoRef.value) {
+        videoRef.value.srcObject = cameraStream
+        await new Promise<void>((resolve) => {
+          videoRef.value!.onloadedmetadata = () => {
+            videoRef.value!.play().then(() => resolve()).catch(() => resolve())
+          }
+        })
+        await new Promise(r => setTimeout(r, 300)) // ← turunkan dari 500ms ke 300ms
+      }
 
       const settings = cameraStream.getVideoTracks()[0]?.getSettings()
       console.log('[qr-camera] resolusi:', settings?.width, 'x', settings?.height)
@@ -398,38 +442,74 @@ async function startCamera() {
   cameraError.value = 'Kamera tidak dapat diakses. Gunakan kode manual.'
 }
 
-
 function stopCamera() {
   cameraStream?.getTracks().forEach(t => t.stop())
   cameraStream = null
   if (qrInterval) { clearInterval(qrInterval); qrInterval = null }
+
+  // Terminate worker saat scanner ditutup
+  if (_qrWorker) {
+    _qrWorker.terminate()
+    _qrWorker = null
+    _workerBusy = false
+  }
 }
+
+let _qrWorker: Worker | null = null
+let _workerBusy = false
 
 function startQrScan() {
+  if (qrInterval) { clearInterval(qrInterval); qrInterval = null }
+
+  // Init worker
+  if (!_qrWorker) {
+    _qrWorker = new Worker('/qr-worker.js')
+    _qrWorker.onmessage = (e) => {
+      _workerBusy = false
+      const result = e.data.result
+      if (!result) return
+
+      const now = Date.now()
+      if (result === _lastQrResult && now - _lastQrTime < 3000) return
+
+      _lastQrResult = result
+      _lastQrTime = now
+
+      clearInterval(qrInterval!)
+      qrInterval = null
+      verifyCode(result)
+    }
+  }
+
   const canvas = document.createElement('canvas')
-  const context = canvas.getContext('2d')!
+  const context = canvas.getContext('2d', { willReadFrequently: true })!
 
+  // Interval lebih lambat — worker yang kerja keras, bukan main thread
   qrInterval = setInterval(() => {
-    if (!videoRef.value || videoRef.value.readyState < 2) return
-
     const video = videoRef.value
-    canvas.width = video.videoWidth
-    canvas.height = video.videoHeight
+    if (!video || video.readyState < 2 || video.videoWidth === 0) return
+    if (_workerBusy) return // skip kalau worker masih proses frame sebelumnya
+
+    // Downscale ke 400px — cukup untuk jsQR, lebih ringan
+    const maxW = 400
+    const scale = Math.min(1, maxW / video.videoWidth)
+    canvas.width = Math.floor(video.videoWidth * scale)
+    canvas.height = Math.floor(video.videoHeight * scale)
 
     context.drawImage(video, 0, 0, canvas.width, canvas.height)
-
     const imageData = context.getImageData(0, 0, canvas.width, canvas.height)
-    const code = jsQR(imageData.data, imageData.width, imageData.height, {
-      inversionAttempts: 'dontInvert',
-    })
 
-    if (code?.data) {
-      clearInterval(qrInterval!)
-      verifyCode(code.data)
-    }
-  }, 300)
+    _workerBusy = true
+    // Transfer buffer ke worker — zero-copy, tidak berat
+    _qrWorker!.postMessage(
+      { data: imageData.data, width: canvas.width, height: canvas.height },
+      [imageData.data.buffer]
+    )
+  }, 250) // interval lebih santai karena worker async
 }
 
+let _lastQrResult = ''
+let _lastQrTime = 0
 
 async function submitManual() {
   if ((manualCode.value?.length ?? 0) < 6 || verifying.value) return
@@ -479,6 +559,7 @@ async function verifyCode(code: string) {
       localStorage.setItem('sn_linked_user', JSON.stringify(linkedUser.value))
       closeScanner()
       await contentStore.loadFavoriteContent(data.user_id)
+
       await speakWithChime(
         `Selamat datang ${namaGuru}.. Semangat mengajar hari ini!`,
         '/sounds/login-chime.mp3'
@@ -565,6 +646,8 @@ function speak(text: string) {
   utt.volume = 0.8
   window.speechSynthesis.cancel()
   window.speechSynthesis.speak(utt)
+
+
 }
 
 // End class - kamera
@@ -596,18 +679,19 @@ async function openEndClass() {
 
   await nextTick()
 
+  // ⚠️ Model lokal dimatikan sementara (USE_LOCAL_FALLBACK = false) — deteksi
+  // sekarang full lewat Roboflow, jadi tidak perlu preload apa pun di sini.
+  if (USE_LOCAL_FALLBACK) {
+    loadPersonModel().catch(e => console.warn('[person-detection] load gagal:', e))
+  }
+
   try {
-    // ✅ Minta resolusi tinggi dulu, fallback ke resolusi lebih rendah kalau tidak support
     let stream: MediaStream | null = null
 
     const constraints = [
-      // Ideal: Full HD
-      { video: { width: { ideal: 1920 }, height: { ideal: 1080 }, facingMode: 'user' } },
-      // Fallback: HD
-      { video: { width: { ideal: 1280 }, height: { ideal: 720 }, facingMode: 'user' } },
-      // Fallback: minimal
-      { video: { width: { min: 640 }, height: { min: 480 }, facingMode: 'user' } },
-      // Last resort: apapun yang tersedia
+      { video: { width: { ideal: 1920 }, height: { ideal: 1080 }, facingMode: 'environment' } },
+      { video: { width: { ideal: 1280 }, height: { ideal: 720 }, facingMode: 'environment' } },
+      { video: { width: { min: 640 }, height: { min: 480 }, facingMode: 'environment' } },
       { video: true },
     ]
 
@@ -623,16 +707,13 @@ async function openEndClass() {
     if (!stream) throw new Error('Tidak ada kamera yang tersedia')
     _stream = stream
 
-    // Log resolusi yang berhasil didapat (untuk debug)
     const track = stream.getVideoTracks()[0]
-    const settings = track.getSettings()
-    console.log('[camera] resolusi:', settings.width, 'x', settings.height)
+    const settings = track?.getSettings()
+    console.log('[camera] resolusi:', settings?.width, 'x', settings?.height)
 
     const videoEl = endClassModalRef.value?.videoEndClassRef
     if (videoEl) {
       videoEl.srcObject = stream
-
-      // ✅ Tunggu video benar-benar siap dan resolusi ter-apply
       await new Promise<void>((resolve) => {
         videoEl.onloadedmetadata = () => {
           videoEl.play().then(() => resolve()).catch(() => resolve())
@@ -641,109 +722,232 @@ async function openEndClass() {
     }
 
     await new Promise(r => setTimeout(r, 300))
-    // startLiveDetection()
+    // ❌ Tidak ada live detection lagi — deteksi hanya dijalankan 1x di
+    // background setelah foto diambil (lihat detectFaceCountFromPhoto)
   } catch (err) {
     console.error('Kamera tidak bisa diakses', err)
   }
 }
 
-// async function startLiveDetection() {
-//   isDetecting.value = true
+// ✅ Model deteksi hasil retrain sendiri (Ultralytics YOLOv8 raw TFJS export,
+// 1 kelas "head"), ditaruh guru di public/models/classos-person-detection/.
+// Signature-nya BEDA TOTAL dari model YOLOX sebelumnya — dicek manual lewat
+// model.json (field "signature"):
+// - Input "images" [1,640,640,3] float32, RGB (TIDAK perlu reverse BGR),
+//   dinormalisasi 0-1 (WAJIB dibagi 255 — tidak ada layer normalisasi di
+//   dalam graph-nya, beda dari model YOLOX yang minta 0-255 mentah).
+// - Output "Identity:0" [1, 5, 8400]: layout CHANNEL-MAJOR (bukan per-anchor
+//   seperti YOLOX) → data[c * numAnchors + i] untuk anchor ke-i, c=0..4
+//   = [cx, cy, w, h, confidence] dalam skala piksel input (640), format
+//   titik-tengah (BUKAN pojok seperti YOLOX).
+// Kalau modelnya diganti lagi nanti, cek ulang field "signature" di
+// model.json — jangan asumsikan signature-nya sama kayak sebelumnya.
+const PERSON_MODEL_URL = '/models/classos-person-detection/model.json'
+const PERSON_INPUT_SIZE = 640
+const PERSON_CONF_THRESHOLD = 0.4
+const PERSON_IOU_THRESHOLD = 0.45
 
-//   try {
-//     await faceapi.nets.tinyFaceDetector.loadFromUri('/models')
-//   } catch {
-//     console.warn('Face API model gagal dimuat')
-//     isDetecting.value = false
-//     return
-//   }
+let _personModel: any | null = null
+const isDetecting = ref(false)
 
-//   isDetecting.value = false
+let _tfScriptLoaded = false
 
-//   _detectInterval = setInterval(async () => {
-//     const video = endClassModalRef.value?.videoEndClassRef
-//     const canvas = endClassModalRef.value?.overlayCanvasRef
-//     if (!video || !canvas || capturedPhoto.value) return
+async function loadTfScript(): Promise<void> {
+  if (_tfScriptLoaded || (window as any).tf) { _tfScriptLoaded = true; return }
+  await new Promise<void>((resolve, reject) => {
+    const tfScript = document.createElement('script')
+    tfScript.src = 'https://cdn.jsdelivr.net/npm/@tensorflow/tfjs@4.22.0/dist/tf.min.js'
+    tfScript.onload = () => { _tfScriptLoaded = true; resolve() }
+    tfScript.onerror = reject
+    document.head.appendChild(tfScript)
+  })
+}
 
-//     try {
-//       const detections = await faceapi.detectAllFaces(video, new faceapi.TinyFaceDetectorOptions())
-//       faceCount.value = detections.length
+// ✅ Single-flight guard — model ini di-preload lebih awal (saat startSession,
+// jauh sebelum guru sampai di step End Class) SEKALIGUS dipanggil lagi di
+// openEndClass() sebagai fallback. Tanpa guard ini, kalau dua pemanggilan
+// itu overlap (preload belum selesai saat openEndClass jalan), tf.loadGraphModel
+// bisa ke-trigger dobel dan buang-buang bandwidth/GPU.
+let _personModelLoadPromise: Promise<void> | null = null
 
-//       const displayWidth = video.clientWidth
-//       const displayHeight = video.clientHeight
-//       const videoWidth = video.videoWidth
-//       const videoHeight = video.videoHeight
+async function loadPersonModel(): Promise<void> {
+  if (_personModel) return
+  if (_personModelLoadPromise) return _personModelLoadPromise
 
-//       canvas.width = displayWidth
-//       canvas.height = displayHeight
-//       canvas.style.width = displayWidth + 'px'
-//       canvas.style.height = displayHeight + 'px'
+  _personModelLoadPromise = _doLoadPersonModel().finally(() => {
+    _personModelLoadPromise = null
+  })
+  return _personModelLoadPromise
+}
 
-//       // ✅ Hitung offset akibat object-cover (letterbox/pillarbox)
-//       const videoAspect = videoWidth / videoHeight
-//       const displayAspect = displayWidth / displayHeight
+async function _doLoadPersonModel() {
+  isDetecting.value = true
+  try {
+    await loadTfScript()
+    const tf = (window as any).tf
+    if (!tf) throw new Error('TensorFlow belum dimuat')
 
-//       let scaleX: number, scaleY: number, offsetX: number, offsetY: number
+    // ✅ Pastikan pakai backend WebGL (GPU-accelerated). Kalau diam-diam jatuh ke
+    // backend 'cpu', inference akan jauh lebih berat dan bikin frame lag parah.
+    try {
+      await tf.setBackend('webgl')
+    } catch (e) {
+      console.warn('[person-detection] WebGL backend gagal, pakai default:', e)
+    }
+    await tf.ready()
 
-//       if (videoAspect > displayAspect) {
-//         // Video lebih lebar dari display → crop kiri kanan (pillarbox)
-//         scaleY = displayHeight / videoHeight
-//         scaleX = scaleY
-//         offsetX = (displayWidth - videoWidth * scaleX) / 2
-//         offsetY = 0
-//       } else {
-//         // Video lebih tinggi dari display → crop atas bawah (letterbox)
-//         scaleX = displayWidth / videoWidth
-//         scaleY = scaleX
-//         offsetX = 0
-//         offsetY = (displayHeight - videoHeight * scaleY) / 2
-//       }
+    _personModel = await tf.loadGraphModel(PERSON_MODEL_URL)
 
-//       const ctx = canvas.getContext('2d')
-//       if (!ctx) return
-//       ctx.clearRect(0, 0, canvas.width, canvas.height)
+    // ✅ Warm-up — picu kompilasi shader WebGL sekali di sini (masih bagian
+    // "loading", ditandai isDetecting=true di UI), supaya tidak terjadi pas
+    // guru baru klik "Ambil Foto Sekarang". Pakai executeAsync (bukan execute)
+    // karena belum dikonfirmasi model ini bebas dari control-flow/dynamic ops.
+    const warmupInput = tf.zeros([1, PERSON_INPUT_SIZE, PERSON_INPUT_SIZE, 3])
+    const warmupOutput = await _personModel.executeAsync(warmupInput)
+    warmupInput.dispose()
+    if (Array.isArray(warmupOutput)) warmupOutput.forEach((t: any) => t.dispose())
+    else warmupOutput.dispose()
+  } finally {
+    isDetecting.value = false
+  }
+}
 
-//       detections.forEach(detection => {
-//         const { x, y, width, height } = detection.box
+interface DetBox { x: number; y: number; w: number; h: number; score: number }
 
-//         // ✅ Terapkan scale + offset
-//         const sx = x * scaleX + offsetX
-//         const sy = y * scaleY + offsetY
-//         const sw = width * scaleX
-//         const sh = height * scaleY
+// Greedy NMS sederhana — buang box yang overlap tinggi (IoU) dengan box berskor lebih tinggi
+function nmsBoxes(boxes: DetBox[], iouThreshold: number): DetBox[] {
+  const sorted = [...boxes].sort((a, b) => b.score - a.score)
+  const kept: DetBox[] = []
 
-//         ctx.strokeStyle = '#22c55e'
-//         ctx.lineWidth = 2
-//         ctx.strokeRect(sx, sy, sw, sh)
+  const iou = (a: DetBox, b: DetBox) => {
+    const interX1 = Math.max(a.x, b.x)
+    const interY1 = Math.max(a.y, b.y)
+    const interX2 = Math.min(a.x + a.w, b.x + b.w)
+    const interY2 = Math.min(a.y + a.h, b.y + b.h)
+    const interArea = Math.max(0, interX2 - interX1) * Math.max(0, interY2 - interY1)
+    const unionArea = a.w * a.h + b.w * b.h - interArea
+    return unionArea <= 0 ? 0 : interArea / unionArea
+  }
 
-//         const cornerLen = 12
-//         ctx.lineWidth = 3
+  for (const box of sorted) {
+    if (!kept.some(k => iou(k, box) > iouThreshold)) kept.push(box)
+  }
+  return kept
+}
 
-//         ctx.beginPath(); ctx.moveTo(sx, sy + cornerLen); ctx.lineTo(sx, sy); ctx.lineTo(sx + cornerLen, sy); ctx.stroke()
-//         ctx.beginPath(); ctx.moveTo(sx + sw - cornerLen, sy); ctx.lineTo(sx + sw, sy); ctx.lineTo(sx + sw, sy + cornerLen); ctx.stroke()
-//         ctx.beginPath(); ctx.moveTo(sx, sy + sh - cornerLen); ctx.lineTo(sx, sy + sh); ctx.lineTo(sx + cornerLen, sy + sh); ctx.stroke()
-//         ctx.beginPath(); ctx.moveTo(sx + sw - cornerLen, sy + sh); ctx.lineTo(sx + sw, sy + sh); ctx.lineTo(sx + sw, sy + sh - cornerLen); ctx.stroke()
+// ❌ Sempat dicoba panggil Roboflow LANGSUNG dari browser (skip backend) tapi
+// kena CORS — serverless.roboflow.com memang didesain untuk dipanggil dari
+// server, bukan browser. ❌ Juga sempat dicoba proxy PHP di public/ folder SPA
+// ini sendiri (classos-beta.isn-speed.com) tapi server itu ternyata PURE
+// Node/Express untuk tampilan, tidak ada PHP-FPM sama sekali (nginx-nya nolak
+// POST ke file statis). Makanya sekarang endpoint-nya dipindah ke server
+// terpisah yang memang menjalankan PHP (isn-speed.com) — lihat riwayat
+// lengkapnya di komentar atas public/detect/detect-head-count.php.
+//
+// Karena sekarang beda domain dari SPA-nya, ini genuinely cross-origin di
+// production/beta (makanya PHP-nya sudah ditambah header CORS). Saat dev
+// lokal tetap pakai path relatif + proxy vite.config.ts (lihat skill
+// `php -S localhost:8000 -t public` di catatan sebelumnya).
+const DETECT_HEAD_COUNT_URL = import.meta.env.DEV
+  ? '/detect/detect-head-count.php'
+  : 'https://isn-speed.com/api-detect-head/detect-head-count.php'
 
-//         const score = Math.round(detection.score * 100)
-//         ctx.fillStyle = '#22c55e'
-//         ctx.fillRect(sx, sy - 18, 52, 18)
-//         ctx.fillStyle = '#ffffff'
-//         ctx.font = 'bold 11px sans-serif'
-//         ctx.fillText(`${score}%`, sx + 4, sy - 4)
-//       })
-//     } catch {
-//       // silent fail
-//     }
-//   }, 700)
-// }
+async function detectHeadCountViaBackend(photoDataUrl: string, signal?: AbortSignal): Promise<number> {
+  const res = await fetch(DETECT_HEAD_COUNT_URL, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ image_base64: photoDataUrl }),
+    signal,
+  })
+  if (!res.ok) throw new Error(`detect-head-count API ${res.status}`)
+  const data = await res.json()
+  return typeof data.count === 'number' ? data.count : 0
+}
 
-// function stopLiveDetection() {
-//   if (_detectInterval) {
-//     clearInterval(_detectInterval)
-//     _detectInterval = null
-//   }
-// }
+// ✅ Fallback OFFLINE — model custom sendiri (YOLOv8 head detector) yang jalan
+// di browser lewat TFJS. Cuma dipakai kalau Roboflow gagal/timeout (lihat
+// detectFaceCountFromPhoto di bawah). Model-nya tetap di-preload dari
+// startSession() supaya sudah ter-cache di browser SEBELUM koneksi mungkin
+// putus pas di step End Class — kalau baru dicoba di-download saat itu juga,
+// fallback ini percuma (butuh internet juga untuk unduh model-nya).
+async function detectFaceCountLocal(photoCanvas: HTMLCanvasElement): Promise<number> {
+  if (!_personModel) await loadPersonModel()
+  const tf = (window as any).tf
+  if (!tf || !_personModel) throw new Error('Model lokal belum siap')
 
+  const inputTensor = tf.tidy(() => {
+    const img = tf.browser.fromPixels(photoCanvas) // RGB uint8 [H,W,3] — urutan channel sudah pas, tidak perlu di-reverse
+    const resized = tf.image.resizeBilinear(img, [PERSON_INPUT_SIZE, PERSON_INPUT_SIZE])
+    return resized.toFloat().div(255.0).expandDims(0) // ⚠️ WAJIB dibagi 255 — beda dari model YOLOX sebelumnya
+  })
+
+  const output = await _personModel.executeAsync(inputTensor)
+  inputTensor.dispose()
+
+  const outputTensor = Array.isArray(output) ? output[0] : output
+  const [, , numAnchors] = outputTensor.shape as [number, number, number]
+  const data: Float32Array = await outputTensor.data()
+  if (Array.isArray(output)) output.forEach((t: any) => t.dispose())
+  else output.dispose()
+
+  // Output [1, 5, numAnchors]: layout CHANNEL-MAJOR, data[c * numAnchors + i]
+  // untuk anchor ke-i. c=0..3 = cx,cy,w,h (titik-tengah, skala PERSON_INPUT_SIZE),
+  // c=4 = confidence (1 kelas saja — "head"). Tidak perlu di-scale balik ke
+  // ukuran asli karena cuma dipakai untuk NMS, tidak ada overlay yang digambar.
+  const candidates: DetBox[] = []
+  for (let i = 0; i < numAnchors; i++) {
+    const score = data[4 * numAnchors + i]!
+    if (score < PERSON_CONF_THRESHOLD) continue
+    const cx = data[0 * numAnchors + i]!
+    const cy = data[1 * numAnchors + i]!
+    const w = data[2 * numAnchors + i]!
+    const h = data[3 * numAnchors + i]!
+    candidates.push({ x: cx - w / 2, y: cy - h / 2, w, h, score })
+  }
+
+  return nmsBoxes(candidates, PERSON_IOU_THRESHOLD).length
+}
+
+const ROBOFLOW_TIMEOUT_MS = 8000
+
+// ⚠️ Fallback ke model lokal DIMATIKAN SEMENTARA atas permintaan user — untuk
+// sekarang cukup pakai Roboflow saja. Kode fallback-nya tetap dibiarkan utuh
+// (detectFaceCountLocal, loadPersonModel, dll) supaya tinggal diaktifkan lagi
+// kapan pun dengan balikin flag ini ke true, tanpa perlu nulis ulang.
+const USE_LOCAL_FALLBACK = false
+
+// ✅ Deteksi dijalankan SEKALI di background, di atas foto yang sudah diambil
+// (bukan live di atas video). Dipanggil dari takePhoto() setelah capturedPhoto
+// ter-set, supaya UI tidak nge-block — cukup tampilkan status "Menganalisa...".
+// Urutan: coba Roboflow (hosted API) dulu; fallback ke model lokal cuma jalan
+// kalau USE_LOCAL_FALLBACK di-aktifkan lagi.
+async function detectFaceCountFromPhoto(photoCanvas: HTMLCanvasElement) {
+  isDetecting.value = true
+  try {
+    try {
+      const controller = new AbortController()
+      const timeoutId = setTimeout(() => controller.abort(), ROBOFLOW_TIMEOUT_MS)
+      const count = await detectHeadCountViaBackend(capturedPhoto.value!, controller.signal)
+      clearTimeout(timeoutId)
+      faceCount.value = count
+      return
+    } catch (e) {
+      console.warn('[person-detection] Roboflow gagal/timeout:', e)
+    }
+
+    if (USE_LOCAL_FALLBACK) {
+      faceCount.value = await detectFaceCountLocal(photoCanvas)
+    } else {
+      faceCount.value = 0 // ← guru tinggal koreksi manual lewat tombol Edit
+    }
+  } catch (e) {
+    console.warn('[person-detection] gagal mendeteksi foto:', e)
+    faceCount.value = 0
+  } finally {
+    isDetecting.value = false
+    saveSessionState(localStorage.getItem(SESSION_ID_KEY) as string)
+  }
+}
 
 function playSound(src: string, volume = 0.7): void {
   const audio = new Audio(src)
@@ -776,23 +980,21 @@ async function takePhoto() {
   const ctx = canvas.getContext('2d')
   canvas.width = video.videoWidth
   canvas.height = video.videoHeight
-
-  // ✅ Mirror canvas agar hasil foto sesuai tampilan kamera depan
-  ctx?.save()
-  ctx?.scale(-1, 1)
-  ctx?.drawImage(video, -canvas.width, 0, canvas.width, canvas.height)
-  ctx?.restore()
+  ctx?.drawImage(video, 0, 0, canvas.width, canvas.height)
 
   playSound('/sounds/camera-shutter.mp3', 0.8)
-
   showFlash.value = true
   setTimeout(() => showFlash.value = false, 300)
 
-  capturedPhoto.value = canvas.toDataURL('image/jpeg', 0.7)
+  capturedPhoto.value = canvas.toDataURL('image/jpeg', 0.92)
   _stream?.getTracks().forEach(t => t.stop())
   _stream = null
 
-  faceCount.value = 0
+  // ✅ Baru di sini deteksi dijalankan — 1x di background di atas foto yang
+  // sudah diambil, bukan live selagi kamera masih terbuka
+  faceCount.value = null
+  detectFaceCountFromPhoto(canvas).catch(e => console.warn('[person-detection] gagal:', e))
+
   saveSessionState(localStorage.getItem(SESSION_ID_KEY) as string)
 }
 
@@ -804,9 +1006,9 @@ function retakePhoto() {
   capturedPhoto.value = null
   faceCount.value = null
 
-  saveSessionState(localStorage.getItem(SESSION_ID_KEY) as string) // ✅ hapus foto lama dari storage juga
+  saveSessionState(localStorage.getItem(SESSION_ID_KEY) as string)
 
-  openEndClass() // akan nyalain kamera lagi karena capturedPhoto sudah null
+  openEndClass() // buka kamera lagi
 }
 
 function closeEndClass() {
@@ -818,6 +1020,7 @@ function closeEndClass() {
   _stream?.getTracks().forEach(t => t.stop())
   _stream = null
 }
+
 let _mediaStream: MediaStream | null = null
 
 const synth = window.speechSynthesis
@@ -974,7 +1177,6 @@ const sessionStarted = ref(false)
 // const selectedPlaylistId = ref('')
 const selectedSessionPlaylist = ref<typeof selectedPlaylist.value>(null)
 
-type StepKey = 'briefing' | 'listening' | 'summary' | 'endclass'
 type StepStatusVal = 'locked' | 'active' | 'done'
 
 const stepStatus = ref<Record<StepKey, StepStatusVal>>({
@@ -1011,7 +1213,7 @@ function playSessionPlaylist() {
   if (!tracks.length) return
 
   playerStore.queueListName = selectedSessionPlaylist.value?.name ?? 'Playlist Sesi'
-  playerStore.playWithQueue(tracks[0], tracks)
+  playerStore.playWithQueue(tracks[0]!, tracks)
 }
 
 const SESSION_STATE_KEY = 'classos_session_state'
@@ -1074,7 +1276,21 @@ async function restoreSessionState() {
 
     if (state.stepStatus) stepStatus.value = state.stepStatus
 
-    // ✅ Restore data laporan sesi
+    // ✅ Restore brief — pakai yang tersimpan, tidak perlu request ulang
+    if (state.brief?.text) {
+      classSession.brief.text = state.brief.text
+      classSession.brief.done = state.brief.done ?? false
+      classSession.brief.loading = false
+    }
+
+    // ✅ Restore summary
+    if (state.summarize?.text) {
+      classSession.summarize.text = state.summarize.text
+      classSession.summarize.done = state.summarize.done ?? false
+      classSession.summarize.loading = false
+    }
+
+    // Restore data laporan sesi
     listeningStartTime.value = state.listeningStartTime ?? null
     listeningStopTime.value = state.listeningStopTime ?? null
     capturedPhoto.value = state.capturedPhoto ?? null
@@ -1083,7 +1299,6 @@ async function restoreSessionState() {
     sessionScore.value = state.sessionScore ?? 0
     sessionScoreReason.value = state.sessionScoreReason ?? ''
 
-    // ✅ Kalau endclass sudah done, langsung tampilkan score final TANPA animasi ulang
     if (state.stepStatus?.endclass === 'done' && state.sessionScore !== undefined) {
       animatedScoreDisplay.value = state.sessionScore
       scoreAnimating.value = false
@@ -1109,30 +1324,30 @@ async function startSession() {
   sessionStarted.value = true
   stepStatus.value = { briefing: 'active', listening: 'locked', summary: 'locked', endclass: 'locked' }
 
+  // ✅ Preload model deteksi lokal dari awal sesi — cuma relevan kalau
+  // USE_LOCAL_FALLBACK aktif. Selama Roboflow jadi satu-satunya jalur deteksi,
+  // tidak perlu download ~99MB ini di muka.
+  if (USE_LOCAL_FALLBACK) {
+    loadPersonModel().catch(e => console.warn('[person-detection] preload gagal:', e))
+  }
+
   const sessionId = generateSessionId()
-  classSession.setSessionId(sessionId) // ← daftarkan session_id ke classSessionStore
-
-  saveSessionState(sessionId) // ← simpan saat mulai (tetap seperti semula)
-
-  // showBriefingPopup.value = true // buka popup, teks akan muncul berjalan seiring stream masuk
+  classSession.setSessionId(sessionId)
+  saveSessionState(sessionId)
 
   speak(`Sesi mengajar dimulai. Playlist ${selectedSessionPlaylist.value.name} telah dipilih. Silakan mulai dengan langkah pertama, Briefing.`)
 
-  // Request briefing ke AI (streaming) — briefingText di popup otomatis terisi berjalan
+  // ❌ Hapus guard ini — selalu request briefing untuk sesi baru
+  // if (classSession.brief.text) return
+
   await classSession.runBrief(
-    String(selectedSessionPlaylist.value.id),   // ⚠️ sesuaikan: field id playlist di object anda mungkin bukan `.id` (misal `.id_playlist`)
-    String(linkedUser.value?.userId)                         // ⚠️ sesuaikan: field/nama teacher id di authStore anda
+    String(selectedSessionPlaylist.value.id),
+    String(linkedUser.value?.userId)
   )
 
   if (classSession.brief.error) {
-    // Opsional: tampilkan toast/error state kalau brief gagal
     console.error('Gagal ambil briefing:', classSession.brief.error)
-    return
   }
-
-  // Setelah teks briefing lengkap diterima, baru mulai TTS bacakan
-  // (kalau anda mau TTS mulai baca SAAT teks masih streaming/belum lengkap, kasih tahu saya — beda pendekatan)
-  // startBriefingTTS()
 }
 
 const LISTENING_KEY = 'classos_listening'
@@ -1154,7 +1369,7 @@ function unlockNext(current: StepKey) {
   const idx = order.indexOf(current)
   stepStatus.value[current] = 'done'
   if (idx + 1 < order.length) {
-    stepStatus.value[order[idx + 1]] = 'active'
+    stepStatus.value[order[idx + 1]!] = 'active'
   }
   saveSessionState(localStorage.getItem(SESSION_ID_KEY) as string) // ← simpan setiap step selesai
 }
@@ -1302,6 +1517,21 @@ function completeSummary() {
 // ── End class submit (ganti savePhoto lama) ─────────────────────────────
 const endClassNote = ref('')
 
+type ScoreTier = 'low' | 'mid' | 'high'
+
+const scoreTier = computed<ScoreTier>(() => {
+  if (sessionScore.value < 40) return 'low'
+  if (sessionScore.value <= 70) return 'mid'
+  return 'high'
+})
+
+// ⚠️ Ganti path ini nanti sesuai file audio yang anda siapkan
+const SCORE_SOUNDS: Record<ScoreTier, string> = {
+  low: '/sounds/score-low.mp3',
+  mid: '/sounds/score-mid.mp3',
+  high: '/sounds/score-high.mp3',
+}
+
 function startScoreAnimation() {
   scoreAnimating.value = true
   showScoreReason.value = false
@@ -1317,10 +1547,8 @@ function startScoreAnimation() {
     const progress = Math.min(elapsed / duration, 1)
 
     if (progress < 0.8) {
-      // Fase acak — angka melompat-lompat cepat (efek slot machine)
       animatedScoreDisplay.value = Math.floor(Math.random() * 100)
     } else {
-      // Fase settle — 20% waktu terakhir, pelan-pelan mendekat ke nilai asli
       const settleProgress = (progress - 0.8) / 0.2
       const noise = Math.floor((1 - settleProgress) * (Math.random() * 30))
       animatedScoreDisplay.value = Math.min(100, target + noise)
@@ -1331,7 +1559,11 @@ function startScoreAnimation() {
     } else {
       animatedScoreDisplay.value = target
       scoreAnimating.value = false
-      setTimeout(() => { showScoreReason.value = true }, 400) // alasan muncul sedikit setelah angka final
+
+      // ✅ Mainkan audio sesuai tier begitu angka final settle
+      playSound(SCORE_SOUNDS[scoreTier.value], 0.8)
+
+      setTimeout(() => { showScoreReason.value = true }, 400)
     }
   }
 
@@ -1510,19 +1742,32 @@ function resetSession() {
 
   if (listeningStatus.value) handleListeningClickWithTimer()
   listeningElapsed.value = 0
-  listeningStartTime.value = null   // ← pindah ke sini
-  listeningStopTime.value = null    // ← tambahan
+  listeningStartTime.value = null
+  listeningStopTime.value = null
   localStorage.removeItem(LISTENING_KEY)
   localStorage.removeItem(TRANSCRIPT_KEY)
   _transcriptLog = []
 
   stopTTS()
 
+  // ✅ Reset brief dan summary di classSession
+  classSession.resetSession()
+
+  // ✅ Hapus cache brief dan summarize agar sesi baru selalu request ulang
+  localStorage.removeItem('classos_brief_cache')
+  localStorage.removeItem('classos_summarize_cache')
+
   showBriefingPopup.value = false
   showListeningPopup.value = false
   showSummaryPopup.value = false
   showEndClassPopup.value = false
   capturedPhoto.value = null
+  faceCount.value = null
+  sessionScore.value = 0
+  sessionScoreReason.value = ''
+  animatedScoreDisplay.value = 0
+  scoreAnimating.value = false
+  showScoreReason.value = false
 
   if (_countdownTimer) {
     clearInterval(_countdownTimer)
@@ -1616,7 +1861,15 @@ const handleClickDetailPlaylist = (item: any) => {
   playerStore.setItemPlay(track, queueTracks)
 }
 
+// function retrySummary() {
+//   classSession.runSummarize(_transcriptLog.join(' ') || 'Tidak ada percakapan yang tercatat selama sesi listening.')
+// }
+
 function retrySummary() {
+  localStorage.removeItem('classos_summarize_cache')
+  classSession.summarize.text = ''
+  classSession.summarize.done = false
+
   classSession.runSummarize(_transcriptLog.join(' ') || 'Tidak ada percakapan yang tercatat selama sesi listening.')
 }
 
@@ -1695,9 +1948,27 @@ function disconnectTeacher() {
   playChime('/sounds/logout-teacher.mp3')
 }
 
+async function retryBriefing() {
+  // Hapus cache lama agar tidak pakai yang terpotong
+  localStorage.removeItem('classos_brief_cache')
+  classSession.brief.text = ''
+  classSession.brief.done = false
+
+  await classSession.runBrief(
+    String(selectedSessionPlaylist.value?.id),
+    String(linkedUser.value?.userId)
+  )
+}
+
 onMounted(() => {
   resetHeroTimer()
-  if (linkedUser.value) loadFavorites()
+  if (linkedUser.value) {
+    loadFavorites()
+    // Pre-load model kalau guru sudah login sebelumnya
+    // loadPersonModel().catch(e => console.warn('[person-detection] preload gagal:', e))
+  }
+
+  nextTick(updateChannelScrollState)
 
   // ✅ Daftarkan callback navigasi ke store
   playerStore.setNavigationCallback((path, query) => {
@@ -1743,8 +2014,6 @@ onUnmounted(() => {
   closeEndClass()
   _mediaStream?.getTracks().forEach(t => t.stop())
   synth.cancel()
-
-  // ✅ Bersihkan callback saat unmount
   playerStore.setNavigationCallback(null as any)
   playerStore.clearQueuePageMeta()
 })
@@ -1780,19 +2049,44 @@ onUnmounted(() => {
       :is-edukasi-playing="isEdukasiPlaying" :progress-percent="progressPercent" :displayed="displayed"
       @play="playEdukasiSong" @seek="seekEdukasi" @seek-start="onEdukasiSeekStart" />
 
-    <!-- Channel Switcher (tampil jika ada channels dari API) -->
-    <div v-if="contentStore.channels.length" class="mb-4 flex gap-2 overflow-x-auto scrollbar-hide">
-      <button v-for="ch in contentStore.channels" :key="ch.id_channel"
-        class="flex-shrink-0 px-3 py-1.5 rounded-full text-xs font-bold transition-colors whitespace-nowrap" :class="contentStore.activeChannelId === ch.id_channel
-          ? 'bg-brand-green text-white'
-          : 'dark:bg-gray-800 bg-gray-100 dark:text-gray-300 text-gray-600 hover:dark:bg-gray-700'"
-        @click="switchChannel(ch.id_channel)">
-        {{ ch.nama_channel }}
+    <!-- Channel Switcher (tampil jika ada channels dari API) — sama persis
+         gayanya dengan StikerNewsView.vue (gradient fade + panah scroll) -->
+    <div v-if="contentStore.channels.length" class="relative mb-5">
+      <!-- Gradient fade kiri -->
+      <div class="pointer-events-none absolute left-0 top-0 bottom-1 w-12 z-[5] bg-gradient-to-r dark:from-[#121212] from-[#f8f9fb] to-transparent transition-opacity duration-200"
+        :class="canScrollLeft ? 'opacity-100' : 'opacity-0'" />
+      <!-- Gradient fade kanan -->
+      <div class="pointer-events-none absolute right-0 top-0 bottom-1 w-12 z-[5] bg-gradient-to-l dark:from-[#121212] from-[#f8f9fb] to-transparent transition-opacity duration-200"
+        :class="canScrollRight ? 'opacity-100' : 'opacity-0'" />
+
+      <div ref="channelScrollRef" class="flex gap-2 overflow-x-auto scrollbar-hide scroll-smooth px-1 py-1"
+        @scroll="updateChannelScrollState">
+        <button v-for="ch in contentStore.channels" :key="ch.id_channel" @click="switchChannel(ch.id_channel)"
+          class="flex-shrink-0 px-4 py-2 rounded-full text-xs font-bold border transition-all duration-200 whitespace-nowrap"
+          :class="contentStore.activeChannelId === ch.id_channel
+            ? 'bg-brand-green border-brand-green text-white shadow-lg shadow-brand-green/30 scale-[1.03]'
+            : 'dark:bg-zinc-900 bg-white dark:border-zinc-700 border-gray-200 dark:text-gray-300 text-gray-600 hover:border-brand-green/50 hover:dark:bg-zinc-800 hover:bg-gray-50'">
+          {{ localizeChannelName(ch.nama) }}
+        </button>
+      </div>
+
+      <!-- Panah kiri -->
+      <button @click="scrollChannels('left')"
+        class="absolute left-0 top-1/2 -translate-y-1/2 z-10 w-8 h-8 rounded-full flex items-center justify-center shadow-md dark:bg-zinc-800 bg-white dark:text-gray-200 text-gray-600 hover:scale-110 active:scale-95 transition-all duration-200"
+        :class="canScrollLeft ? 'opacity-100' : 'opacity-0 pointer-events-none'" title="Scroll ke kiri">
+        <i class="ri-arrow-left-s-line text-lg" />
+      </button>
+
+      <!-- Panah kanan -->
+      <button @click="scrollChannels('right')"
+        class="absolute right-0 top-1/2 -translate-y-1/2 z-10 w-8 h-8 rounded-full flex items-center justify-center shadow-md dark:bg-zinc-800 bg-white dark:text-gray-200 text-gray-600 hover:scale-110 active:scale-95 transition-all duration-200"
+        :class="canScrollRight ? 'opacity-100' : 'opacity-0 pointer-events-none'" title="Scroll ke kanan">
+        <i class="ri-arrow-right-s-line text-lg" />
       </button>
     </div>
 
     <!-- StikerNews Pilihan -->
-    <StikerNewsRecommended :api-random-items="apiRandomItems" :local-random-news="localRandomNews"
+    <StikerNewsRecommended :api-random-items="apiRandomItems"
       :loading="contentStore.loading" :channel-items="channelItems" @play="playStikerRandom"
       @detail="handleClickDetailChoose" />
 
@@ -1821,25 +2115,26 @@ onUnmounted(() => {
 
     <BriefingModal v-model="showBriefingPopup" :briefing-text="briefingText" :loading="classSession.brief.loading"
       :error="classSession.brief.error" :is-speaking="isSpeaking" :is-paused="isPaused" :speaking-step="speakingStep"
-      @close="closeBriefing" @restart-tts="restartBriefingTTS" @toggle-tts="startBriefingTTS"
-      @complete="completeBriefing" @retry="startSession" />
+      :briefing-done="classSession.brief.done" @close="closeBriefing" @restart-tts="restartBriefingTTS"
+      @toggle-tts="startBriefingTTS" @complete="completeBriefing" @retry="retryBriefing" />
 
     <ListeningModal v-model="showListeningPopup" :listening-elapsed="listeningElapsed"
-      :listening-status="listeningStatus" :step-status="stepStatus.listening"
+      :listening-status="listeningStatus" :step-status="stepStatus.listening ?? 'locked'"
       :submitting-listening="submittingListening" :format-listening-time="formatListeningTime"
       @toggle="handleListeningClickWithTimer" @complete="completeListening" />
 
     <SummaryModal v-model="showSummaryPopup" :summary-text="summaryText" :loading="classSession.summarize.loading"
       :error="classSession.summarize.error" :is-speaking="isSpeaking" :is-paused="isPaused"
-      :speaking-step="speakingStep" @close="closeSummary" @restart-tts="restartSummaryTTS" @toggle-tts="startSummaryTTS"
-      @complete="completeSummary" @retry="retrySummary" />
+      :speaking-step="speakingStep" :summary-done="classSession.brief.done" @close="closeSummary"
+      @restart-tts="restartSummaryTTS" @toggle-tts="startSummaryTTS" @complete="completeSummary"
+      @retry="retrySummary" />
 
     <EndClassModal ref="endClassModalRef" v-model="showEndClassPopup" :captured-photo="capturedPhoto"
-      :face-count="faceCount" :countdown="countdown" :show-flash="showFlash" :end-class-note="endClassNote"
-      :is-recording-note="isRecordingNote" :submitting-end-class="submittingEndClass"
-      @update:end-class-note="endClassNote = $event" @close="closeEndClass" @toggle-note-recording="toggleNoteRecording"
-      @start-countdown="startCountdown" @retake="retakePhoto" @submit="submitEndClass"
-      @update:face-count="faceCount = $event" />
+      :is-detecting="isDetecting" :face-count="faceCount" :countdown="countdown" :show-flash="showFlash"
+      :end-class-note="endClassNote" :is-recording-note="isRecordingNote" :submitting-end-class="submittingEndClass"
+      @update:end-class-note="endClassNote = $event" @close="closeEndClass"
+      @toggle-note-recording="toggleNoteRecording" @take-photo="startCountdown" @retake="retakePhoto"
+      @submit="submitEndClass" />
 
     <!-- Konfirmasi Ganti Akun -->
     <ConfirmChangeAccountModal v-model="showConfirmGanti" :linked-user-name="linkedUser?.name"
@@ -1853,7 +2148,7 @@ onUnmounted(() => {
       :listening-start-time="listeningStartTime" :listening-stop-time="listeningStopTime" :summary-text="summaryText"
       :end-class-note="endClassNote" :animated-score-display="animatedScoreDisplay"
       :session-score-reason="sessionScoreReason" :score-animating="scoreAnimating" :show-score-reason="showScoreReason"
-      @close="closeSessionReport" />
+      :scoreTier="scoreTier" @close="closeSessionReport" />
 
     <!-- Popup Detail -->
     <TrackDetailPopup v-model="showTrackPopup" />
