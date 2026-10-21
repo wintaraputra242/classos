@@ -5,7 +5,7 @@ import { usePlayerStore } from '@/stores/player'
 import { useContentStore } from '@/stores/content'
 import { useThemeStore } from '@/stores/theme'
 import { useAuthStore } from '@/stores/auth'
-import { gradientFor } from '@/composables/useContent'
+import { gradientFor, schoolIconFor } from '@/composables/useContent'
 import { nextTick } from 'vue'
 
 interface FilterItem {
@@ -165,8 +165,30 @@ function formatTime(secs: number): string {
           <img v-if="item.gambar_url" :src="item.gambar_url" :alt="item.judul"
             class="w-full h-full object-cover transition-transform duration-300 group-hover:scale-105" loading="lazy"
             decoding="async" @error="(e) => (e.target as HTMLImageElement).style.display = 'none'" />
-          <div class="absolute inset-0" :class="item.gambar_url ? '-z-10' : 'z-0'"
-            :style="{ background: `linear-gradient(135deg, ${gradientFor(item.id_lonceng).from}, ${gradientFor(item.id_lonceng).to})` }" />
+          <!-- ✅ Fallback saat tidak ada gambar — gradient + garis diagonal + ikon
+               watermark sesuai tipe konten + orb blur (motif sama dengan background
+               dekoratif Beranda, floatOrb). Tetap dirender di belakang gambar (bukan
+               v-if/v-else) supaya tetap jadi fallback kalau gambar gagal load. -->
+          <div class="absolute inset-0 overflow-hidden" :class="item.gambar_url ? '-z-10' : 'z-0'">
+            <div class="absolute inset-0"
+              :style="{ background: `linear-gradient(135deg, ${gradientFor(item.id_lonceng).from}, ${gradientFor(item.id_lonceng).to})` }" />
+            <!-- Ikon-ikon kecil bertebaran — "stiker" sekolah, posisi/ukuran beda-beda
+                 tapi konsisten per konten (bukan garis lagi) -->
+            <i class="absolute top-2 left-9 text-xl text-white/10 rotate-[15deg] pointer-events-none"
+              :class="schoolIconFor(item.id_lonceng, 2)" />
+            <i class="absolute top-5 right-7 text-2xl text-white/10 -rotate-[18deg] pointer-events-none"
+              :class="schoolIconFor(item.id_lonceng, 5)" />
+            <i class="absolute bottom-9 left-3 text-lg text-white/10 rotate-[8deg] pointer-events-none"
+              :class="schoolIconFor(item.id_lonceng, 7)" />
+            <!-- Ikon watermark besar — perlengkapan sekolah, gantian per konten -->
+            <i class="absolute -bottom-3 -right-3 text-7xl text-white/20 rotate-[-12deg] pointer-events-none"
+              :class="schoolIconFor(item.id_lonceng)" />
+            <!-- Orb blur -->
+            <div class="absolute w-24 h-24 rounded-full bg-white/20 blur-2xl -top-8 -left-6"
+              style="animation: floatOrb 10s ease-in-out infinite;" />
+            <div class="absolute w-16 h-16 rounded-full bg-black/15 blur-xl -bottom-6 right-6"
+              style="animation: floatOrb 13s ease-in-out infinite; animation-delay: -4s;" />
+          </div>
 
           <!-- Badge audio/teks -->
           <div class="absolute top-2 left-2 flex gap-1 z-10">

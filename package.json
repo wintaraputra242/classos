@@ -1,6 +1,6 @@
 {
   "name": "stikernews-pelajar",
-  "version": "1.0.12",
+  "version": "1.0.18",
   "private": true,
   "type": "module",
   "scripts": {
@@ -23,12 +23,14 @@
     "lucide-vue-next": "^1.0.0",
     "pinia": "^3.0.4",
     "remixicon": "^4.9.1",
+    "twemoji": "^14.0.2",
     "vue": "^3.5.32",
     "vue-router": "^5.0.4"
   },
   "devDependencies": {
     "@tsconfig/node24": "^24.0.4",
     "@types/node": "^24.12.2",
+    "@types/twemoji": "^13.1.1",
     "@vitejs/plugin-vue": "^6.0.6",
     "@vue/eslint-config-typescript": "^14.7.0",
     "@vue/tsconfig": "^0.9.1",

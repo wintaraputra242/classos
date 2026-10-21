@@ -5,13 +5,13 @@ import { useThemeStore } from '@/stores/theme'
 import { usePlayerStore } from '@/stores/player'
 import { useContentStore } from '@/stores/content'
 import { useAuthStore } from '@/stores/auth'
-import { useContent, gradientFor, emojiFor } from '@/composables/useContent'
-import { stikerNewsData, karakterData, getRandomItems } from '@/data/mockData'
-import type { PlayerTrack } from '@/types'
+import { useContent, gradientFor, emojiFor, localizeChannelName } from '@/composables/useContent'
+import { karakterData } from '@/data/mockData'
+import type { PlayerTrack, StepKey } from '@/types'
 import jsQR from 'jsqr'
 import TrackDetailPopup from '@/components/ui/TrackDetailPopup.vue'
 import * as faceapi from 'face-api.js'
-import { generateSessionId, sanitizeAiText } from '@/helpers'
+import { generateSessionId, sanitizeAiText, parseContentTools } from '@/helpers'
 import { useClassSessionStore } from '@/stores/classSession'
 import BriefingModal from '@/components/beranda/BriefingModal.vue'
 import ListeningModal from '@/components/beranda/ListeningModal.vue'
@@ -35,8 +35,34 @@ const classSession = useClassSessionStore()
 const auth = useAuthStore()
 const { playItem, setItem } = useContent()
 
-// ── Fallback lokal ─────────────────────────────────────────────────────────
-const localRandomNews = computed(() => getRandomItems(stikerNewsData, 5))
+async function switchChannel(channelId: number) {
+  await contentStore.switchChannel(channelId, auth.userId)
+}
+
+// ✅ Tombol panah untuk scroll horizontal daftar kategori — sama persis
+// dengan StikerNewsView.vue, biar konsisten. Otomatis disable di ujung
+// kiri/kanan (canScrollLeft/Right dicek ulang tiap channels berubah & tiap
+// scroll manual).
+const channelScrollRef = ref<HTMLElement | null>(null)
+const canScrollLeft = ref(false)
+const canScrollRight = ref(false)
+
+function updateChannelScrollState() {
+  const el = channelScrollRef.value
+  if (!el) return
+  canScrollLeft.value = el.scrollLeft > 4
+  canScrollRight.value = el.scrollLeft < el.scrollWidth - el.clientWidth - 4
+}
+
+function scrollChannels(direction: 'left' | 'right') {
+  const el = channelScrollRef.value
+  if (!el) return
+  el.scrollBy({ left: direction === 'left' ? -200 : 200, behavior: 'smooth' })
+}
+
+watch(() => contentStore.channels.length, () => {
+  nextTick(updateChannelScrollState)
+})
 
 let _cachedDisplayed: typeof karakterData = []
 
@@ -115,6 +141,8 @@ function mapToPlayerTrack(item: any): PlayerTrack {
     audio_url: item.audio_url,
   })
 
+  const { questions, quiz, slides, project } = parseContentTools(item)
+
   return {
     id: String(item.id_lonceng),
     id_stikernews: item.id_lonceng,
@@ -133,6 +161,10 @@ function mapToPlayerTrack(item: any): PlayerTrack {
     isPlaying: false,
     isFavorite: false,
     link: item.podcast_url || item.audio_url,
+    questions,
+    quiz,
+    slides,
+    project,
   }
 }
 
@@ -647,7 +679,11 @@ async function openEndClass() {
 
   await nextTick()
 
-  loadCocoModel().catch(e => console.warn('[coco-ssd] load gagal:', e))
+  // ⚠️ Model lokal dimatikan sementara (USE_LOCAL_FALLBACK = false) — deteksi
+  // sekarang full lewat Roboflow, jadi tidak perlu preload apa pun di sini.
+  if (USE_LOCAL_FALLBACK) {
+    loadPersonModel().catch(e => console.warn('[person-detection] load gagal:', e))
+  }
 
   try {
     let stream: MediaStream | null = null
@@ -686,135 +722,230 @@ async function openEndClass() {
     }
 
     await new Promise(r => setTimeout(r, 300))
-    startLiveDetection() // ← aktifkan
+    // ❌ Tidak ada live detection lagi — deteksi hanya dijalankan 1x di
+    // background setelah foto diambil (lihat detectFaceCountFromPhoto)
   } catch (err) {
     console.error('Kamera tidak bisa diakses', err)
   }
 }
 
-let _cocoModel: any | null = null
-let _detectInterval: ReturnType<typeof setInterval> | null = null
+// ✅ Model deteksi hasil retrain sendiri (Ultralytics YOLOv8 raw TFJS export,
+// 1 kelas "head"), ditaruh guru di public/models/classos-person-detection/.
+// Signature-nya BEDA TOTAL dari model YOLOX sebelumnya — dicek manual lewat
+// model.json (field "signature"):
+// - Input "images" [1,640,640,3] float32, RGB (TIDAK perlu reverse BGR),
+//   dinormalisasi 0-1 (WAJIB dibagi 255 — tidak ada layer normalisasi di
+//   dalam graph-nya, beda dari model YOLOX yang minta 0-255 mentah).
+// - Output "Identity:0" [1, 5, 8400]: layout CHANNEL-MAJOR (bukan per-anchor
+//   seperti YOLOX) → data[c * numAnchors + i] untuk anchor ke-i, c=0..4
+//   = [cx, cy, w, h, confidence] dalam skala piksel input (640), format
+//   titik-tengah (BUKAN pojok seperti YOLOX).
+// Kalau modelnya diganti lagi nanti, cek ulang field "signature" di
+// model.json — jangan asumsikan signature-nya sama kayak sebelumnya.
+const PERSON_MODEL_URL = '/models/classos-person-detection/model.json'
+const PERSON_INPUT_SIZE = 640
+const PERSON_CONF_THRESHOLD = 0.4
+const PERSON_IOU_THRESHOLD = 0.45
+
+let _personModel: any | null = null
 const isDetecting = ref(false)
 
 let _tfScriptLoaded = false
 
-async function loadCocoScripts(): Promise<void> {
-  if (_tfScriptLoaded) return
-
+async function loadTfScript(): Promise<void> {
+  if (_tfScriptLoaded || (window as any).tf) { _tfScriptLoaded = true; return }
   await new Promise<void>((resolve, reject) => {
     const tfScript = document.createElement('script')
     tfScript.src = 'https://cdn.jsdelivr.net/npm/@tensorflow/tfjs@4.22.0/dist/tf.min.js'
-    tfScript.onload = () => {
-      const cocoScript = document.createElement('script')
-      cocoScript.src = 'https://cdn.jsdelivr.net/npm/@tensorflow-models/coco-ssd@2.2.3/dist/coco-ssd.min.js'
-      cocoScript.onload = () => {
-        _tfScriptLoaded = true
-        resolve()
-      }
-      cocoScript.onerror = reject
-      document.head.appendChild(cocoScript)
-    }
+    tfScript.onload = () => { _tfScriptLoaded = true; resolve() }
     tfScript.onerror = reject
     document.head.appendChild(tfScript)
   })
 }
 
-async function loadCocoModel() {
-  if (_cocoModel) return
+// ✅ Single-flight guard — model ini di-preload lebih awal (saat startSession,
+// jauh sebelum guru sampai di step End Class) SEKALIGUS dipanggil lagi di
+// openEndClass() sebagai fallback. Tanpa guard ini, kalau dua pemanggilan
+// itu overlap (preload belum selesai saat openEndClass jalan), tf.loadGraphModel
+// bisa ke-trigger dobel dan buang-buang bandwidth/GPU.
+let _personModelLoadPromise: Promise<void> | null = null
 
+async function loadPersonModel(): Promise<void> {
+  if (_personModel) return
+  if (_personModelLoadPromise) return _personModelLoadPromise
+
+  _personModelLoadPromise = _doLoadPersonModel().finally(() => {
+    _personModelLoadPromise = null
+  })
+  return _personModelLoadPromise
+}
+
+async function _doLoadPersonModel() {
   isDetecting.value = true
   try {
-    // Load script dulu kalau belum ada
-    await loadCocoScripts()
-
+    await loadTfScript()
     const tf = (window as any).tf
-    const cocoSsd = (window as any).cocoSsd
+    if (!tf) throw new Error('TensorFlow belum dimuat')
 
-    if (!tf || !cocoSsd) throw new Error('TensorFlow atau COCO-SSD belum dimuat')
+    // ✅ Pastikan pakai backend WebGL (GPU-accelerated). Kalau diam-diam jatuh ke
+    // backend 'cpu', inference akan jauh lebih berat dan bikin frame lag parah.
+    try {
+      await tf.setBackend('webgl')
+    } catch (e) {
+      console.warn('[person-detection] WebGL backend gagal, pakai default:', e)
+    }
+    await tf.ready()
 
-    _cocoModel = await cocoSsd.load({ base: 'lite_mobilenet_v2' })
+    _personModel = await tf.loadGraphModel(PERSON_MODEL_URL)
+
+    // ✅ Warm-up — picu kompilasi shader WebGL sekali di sini (masih bagian
+    // "loading", ditandai isDetecting=true di UI), supaya tidak terjadi pas
+    // guru baru klik "Ambil Foto Sekarang". Pakai executeAsync (bukan execute)
+    // karena belum dikonfirmasi model ini bebas dari control-flow/dynamic ops.
+    const warmupInput = tf.zeros([1, PERSON_INPUT_SIZE, PERSON_INPUT_SIZE, 3])
+    const warmupOutput = await _personModel.executeAsync(warmupInput)
+    warmupInput.dispose()
+    if (Array.isArray(warmupOutput)) warmupOutput.forEach((t: any) => t.dispose())
+    else warmupOutput.dispose()
   } finally {
     isDetecting.value = false
   }
 }
 
-async function startLiveDetection() {
-  if (!_cocoModel) await loadCocoModel()
+interface DetBox { x: number; y: number; w: number; h: number; score: number }
 
-  _detectInterval = setInterval(async () => {
-    const video = endClassModalRef.value?.videoEndClassRef
-    const canvas = endClassModalRef.value?.overlayCanvasRef
-    if (!video || !canvas || capturedPhoto.value) return
+// Greedy NMS sederhana — buang box yang overlap tinggi (IoU) dengan box berskor lebih tinggi
+function nmsBoxes(boxes: DetBox[], iouThreshold: number): DetBox[] {
+  const sorted = [...boxes].sort((a, b) => b.score - a.score)
+  const kept: DetBox[] = []
 
-    try {
-      // ✅ Turunkan threshold ke 0.25, naikkan maxDetections ke 50
-      const predictions = await _cocoModel!.detect(video, 50, 0.25)
-      const persons = predictions.filter((p: any) => p.class === 'person')
-      faceCount.value = persons.length
+  const iou = (a: DetBox, b: DetBox) => {
+    const interX1 = Math.max(a.x, b.x)
+    const interY1 = Math.max(a.y, b.y)
+    const interX2 = Math.min(a.x + a.w, b.x + b.w)
+    const interY2 = Math.min(a.y + a.h, b.y + b.h)
+    const interArea = Math.max(0, interX2 - interX1) * Math.max(0, interY2 - interY1)
+    const unionArea = a.w * a.h + b.w * b.h - interArea
+    return unionArea <= 0 ? 0 : interArea / unionArea
+  }
 
-      const ctx = canvas.getContext('2d')
-      if (!ctx) return
-
-      canvas.width = video.clientWidth
-      canvas.height = video.clientHeight
-      ctx.clearRect(0, 0, canvas.width, canvas.height)
-
-      // ✅ Hitung offset object-cover agar box pas
-      const videoAspect = video.videoWidth / video.videoHeight
-      const displayAspect = video.clientWidth / video.clientHeight
-
-      let scaleX: number, scaleY: number, offsetX: number, offsetY: number
-
-      if (videoAspect > displayAspect) {
-        scaleY = video.clientHeight / video.videoHeight
-        scaleX = scaleY
-        offsetX = (video.clientWidth - video.videoWidth * scaleX) / 2
-        offsetY = 0
-      } else {
-        scaleX = video.clientWidth / video.videoWidth
-        scaleY = scaleX
-        offsetX = 0
-        offsetY = (video.clientHeight - video.videoHeight * scaleY) / 2
-      }
-
-      persons.forEach((person: any, i: number) => {
-        const [x, y, w, h] = person.bbox
-        const sx = x * scaleX + offsetX
-        const sy = y * scaleY + offsetY
-        const sw = w * scaleX
-        const sh = h * scaleY
-        const score = Math.round(person.score * 100)
-
-        ctx.strokeStyle = '#22c55e'
-        ctx.lineWidth = 2
-        ctx.strokeRect(sx, sy, sw, sh)
-
-        const c = 14
-        ctx.lineWidth = 3
-        ctx.beginPath(); ctx.moveTo(sx, sy + c); ctx.lineTo(sx, sy); ctx.lineTo(sx + c, sy); ctx.stroke()
-        ctx.beginPath(); ctx.moveTo(sx + sw - c, sy); ctx.lineTo(sx + sw, sy); ctx.lineTo(sx + sw, sy + c); ctx.stroke()
-        ctx.beginPath(); ctx.moveTo(sx, sy + sh - c); ctx.lineTo(sx, sy + sh); ctx.lineTo(sx + c, sy + sh); ctx.stroke()
-        ctx.beginPath(); ctx.moveTo(sx + sw - c, sy + sh); ctx.lineTo(sx + sw, sy + sh); ctx.lineTo(sx + sw, sy + sh - c); ctx.stroke()
-
-        ctx.fillStyle = '#22c55e'
-        ctx.fillRect(sx, sy - 20, 72, 20)
-        ctx.fillStyle = '#fff'
-        ctx.font = 'bold 11px sans-serif'
-        ctx.fillText(`#${i + 1} ${score}%`, sx + 4, sy - 5)
-      })
-    } catch {
-      // silent fail
-    }
-  }, 500)
+  for (const box of sorted) {
+    if (!kept.some(k => iou(k, box) > iouThreshold)) kept.push(box)
+  }
+  return kept
 }
 
-function stopLiveDetection() {
-  if (_detectInterval) { clearInterval(_detectInterval); _detectInterval = null }
+// ❌ Sempat dicoba panggil Roboflow LANGSUNG dari browser (skip backend) tapi
+// kena CORS — serverless.roboflow.com memang didesain untuk dipanggil dari
+// server, bukan browser. ❌ Juga sempat dicoba proxy PHP di public/ folder SPA
+// ini sendiri (classos-beta.isn-speed.com) tapi server itu ternyata PURE
+// Node/Express untuk tampilan, tidak ada PHP-FPM sama sekali (nginx-nya nolak
+// POST ke file statis). Makanya sekarang endpoint-nya dipindah ke server
+// terpisah yang memang menjalankan PHP (isn-speed.com) — lihat riwayat
+// lengkapnya di komentar atas public/detect/detect-head-count.php.
+//
+// Karena sekarang beda domain dari SPA-nya, ini genuinely cross-origin di
+// production/beta (makanya PHP-nya sudah ditambah header CORS). Saat dev
+// lokal tetap pakai path relatif + proxy vite.config.ts (lihat skill
+// `php -S localhost:8000 -t public` di catatan sebelumnya).
+const DETECT_HEAD_COUNT_URL = import.meta.env.DEV
+  ? '/detect/detect-head-count.php'
+  : 'https://isn-speed.com/api-detect-head/detect-head-count.php'
 
-  const canvas = endClassModalRef.value?.overlayCanvasRef
-  if (canvas) {
-    const ctx = canvas.getContext('2d')
-    ctx?.clearRect(0, 0, canvas.width, canvas.height)
+async function detectHeadCountViaBackend(photoDataUrl: string, signal?: AbortSignal): Promise<number> {
+  const res = await fetch(DETECT_HEAD_COUNT_URL, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ image_base64: photoDataUrl }),
+    signal,
+  })
+  if (!res.ok) throw new Error(`detect-head-count API ${res.status}`)
+  const data = await res.json()
+  return typeof data.count === 'number' ? data.count : 0
+}
+
+// ✅ Fallback OFFLINE — model custom sendiri (YOLOv8 head detector) yang jalan
+// di browser lewat TFJS. Cuma dipakai kalau Roboflow gagal/timeout (lihat
+// detectFaceCountFromPhoto di bawah). Model-nya tetap di-preload dari
+// startSession() supaya sudah ter-cache di browser SEBELUM koneksi mungkin
+// putus pas di step End Class — kalau baru dicoba di-download saat itu juga,
+// fallback ini percuma (butuh internet juga untuk unduh model-nya).
+async function detectFaceCountLocal(photoCanvas: HTMLCanvasElement): Promise<number> {
+  if (!_personModel) await loadPersonModel()
+  const tf = (window as any).tf
+  if (!tf || !_personModel) throw new Error('Model lokal belum siap')
+
+  const inputTensor = tf.tidy(() => {
+    const img = tf.browser.fromPixels(photoCanvas) // RGB uint8 [H,W,3] — urutan channel sudah pas, tidak perlu di-reverse
+    const resized = tf.image.resizeBilinear(img, [PERSON_INPUT_SIZE, PERSON_INPUT_SIZE])
+    return resized.toFloat().div(255.0).expandDims(0) // ⚠️ WAJIB dibagi 255 — beda dari model YOLOX sebelumnya
+  })
+
+  const output = await _personModel.executeAsync(inputTensor)
+  inputTensor.dispose()
+
+  const outputTensor = Array.isArray(output) ? output[0] : output
+  const [, , numAnchors] = outputTensor.shape as [number, number, number]
+  const data: Float32Array = await outputTensor.data()
+  if (Array.isArray(output)) output.forEach((t: any) => t.dispose())
+  else output.dispose()
+
+  // Output [1, 5, numAnchors]: layout CHANNEL-MAJOR, data[c * numAnchors + i]
+  // untuk anchor ke-i. c=0..3 = cx,cy,w,h (titik-tengah, skala PERSON_INPUT_SIZE),
+  // c=4 = confidence (1 kelas saja — "head"). Tidak perlu di-scale balik ke
+  // ukuran asli karena cuma dipakai untuk NMS, tidak ada overlay yang digambar.
+  const candidates: DetBox[] = []
+  for (let i = 0; i < numAnchors; i++) {
+    const score = data[4 * numAnchors + i]!
+    if (score < PERSON_CONF_THRESHOLD) continue
+    const cx = data[0 * numAnchors + i]!
+    const cy = data[1 * numAnchors + i]!
+    const w = data[2 * numAnchors + i]!
+    const h = data[3 * numAnchors + i]!
+    candidates.push({ x: cx - w / 2, y: cy - h / 2, w, h, score })
+  }
+
+  return nmsBoxes(candidates, PERSON_IOU_THRESHOLD).length
+}
+
+const ROBOFLOW_TIMEOUT_MS = 8000
+
+// ⚠️ Fallback ke model lokal DIMATIKAN SEMENTARA atas permintaan user — untuk
+// sekarang cukup pakai Roboflow saja. Kode fallback-nya tetap dibiarkan utuh
+// (detectFaceCountLocal, loadPersonModel, dll) supaya tinggal diaktifkan lagi
+// kapan pun dengan balikin flag ini ke true, tanpa perlu nulis ulang.
+const USE_LOCAL_FALLBACK = false
+
+// ✅ Deteksi dijalankan SEKALI di background, di atas foto yang sudah diambil
+// (bukan live di atas video). Dipanggil dari takePhoto() setelah capturedPhoto
+// ter-set, supaya UI tidak nge-block — cukup tampilkan status "Menganalisa...".
+// Urutan: coba Roboflow (hosted API) dulu; fallback ke model lokal cuma jalan
+// kalau USE_LOCAL_FALLBACK di-aktifkan lagi.
+async function detectFaceCountFromPhoto(photoCanvas: HTMLCanvasElement) {
+  isDetecting.value = true
+  try {
+    try {
+      const controller = new AbortController()
+      const timeoutId = setTimeout(() => controller.abort(), ROBOFLOW_TIMEOUT_MS)
+      const count = await detectHeadCountViaBackend(capturedPhoto.value!, controller.signal)
+      clearTimeout(timeoutId)
+      faceCount.value = count
+      return
+    } catch (e) {
+      console.warn('[person-detection] Roboflow gagal/timeout:', e)
+    }
+
+    if (USE_LOCAL_FALLBACK) {
+      faceCount.value = await detectFaceCountLocal(photoCanvas)
+    } else {
+      faceCount.value = 0 // ← guru tinggal koreksi manual lewat tombol Edit
+    }
+  } catch (e) {
+    console.warn('[person-detection] gagal mendeteksi foto:', e)
+    faceCount.value = 0
+  } finally {
+    isDetecting.value = false
+    saveSessionState(localStorage.getItem(SESSION_ID_KEY) as string)
   }
 }
 
@@ -825,10 +956,6 @@ function playSound(src: string, volume = 0.7): void {
 }
 
 function startCountdown() {
-  // ← Stop live detection saat countdown mulai
-  // faceCount yang terakhir terdeteksi akan dipakai sebagai hasil final
-  stopLiveDetection()
-
   countdown.value = 5
   playSound('/sounds/countdown-beep.mp3')
 
@@ -863,7 +990,11 @@ async function takePhoto() {
   _stream?.getTracks().forEach(t => t.stop())
   _stream = null
 
-  // ← faceCount tidak di-reset, pakai hasil deteksi terakhir sebelum countdown
+  // ✅ Baru di sini deteksi dijalankan — 1x di background di atas foto yang
+  // sudah diambil, bukan live selagi kamera masih terbuka
+  faceCount.value = null
+  detectFaceCountFromPhoto(canvas).catch(e => console.warn('[person-detection] gagal:', e))
+
   saveSessionState(localStorage.getItem(SESSION_ID_KEY) as string)
 }
 
@@ -877,12 +1008,11 @@ function retakePhoto() {
 
   saveSessionState(localStorage.getItem(SESSION_ID_KEY) as string)
 
-  openEndClass() // buka kamera lagi + startLiveDetection jalan lagi
+  openEndClass() // buka kamera lagi
 }
 
 function closeEndClass() {
   if (_countdownTimer) { clearInterval(_countdownTimer); _countdownTimer = null }
-  stopLiveDetection() // ← tambahkan
   stopNoteRecordingIfActive()
   showEndClassPopup.value = false
   countdown.value = 0
@@ -1047,7 +1177,6 @@ const sessionStarted = ref(false)
 // const selectedPlaylistId = ref('')
 const selectedSessionPlaylist = ref<typeof selectedPlaylist.value>(null)
 
-type StepKey = 'briefing' | 'listening' | 'summary' | 'endclass'
 type StepStatusVal = 'locked' | 'active' | 'done'
 
 const stepStatus = ref<Record<StepKey, StepStatusVal>>({
@@ -1084,7 +1213,7 @@ function playSessionPlaylist() {
   if (!tracks.length) return
 
   playerStore.queueListName = selectedSessionPlaylist.value?.name ?? 'Playlist Sesi'
-  playerStore.playWithQueue(tracks[0], tracks)
+  playerStore.playWithQueue(tracks[0]!, tracks)
 }
 
 const SESSION_STATE_KEY = 'classos_session_state'
@@ -1195,6 +1324,13 @@ async function startSession() {
   sessionStarted.value = true
   stepStatus.value = { briefing: 'active', listening: 'locked', summary: 'locked', endclass: 'locked' }
 
+  // ✅ Preload model deteksi lokal dari awal sesi — cuma relevan kalau
+  // USE_LOCAL_FALLBACK aktif. Selama Roboflow jadi satu-satunya jalur deteksi,
+  // tidak perlu download ~99MB ini di muka.
+  if (USE_LOCAL_FALLBACK) {
+    loadPersonModel().catch(e => console.warn('[person-detection] preload gagal:', e))
+  }
+
   const sessionId = generateSessionId()
   classSession.setSessionId(sessionId)
   saveSessionState(sessionId)
@@ -1233,7 +1369,7 @@ function unlockNext(current: StepKey) {
   const idx = order.indexOf(current)
   stepStatus.value[current] = 'done'
   if (idx + 1 < order.length) {
-    stepStatus.value[order[idx + 1]] = 'active'
+    stepStatus.value[order[idx + 1]!] = 'active'
   }
   saveSessionState(localStorage.getItem(SESSION_ID_KEY) as string) // ← simpan setiap step selesai
 }
@@ -1812,23 +1948,6 @@ function disconnectTeacher() {
   playChime('/sounds/logout-teacher.mp3')
 }
 
-const showFaceConfirmPopup = ref(false)
-
-function requestConfirmDetection() {
-  stopLiveDetection() // freeze jumlah wajah & hapus box, sesuai perbaikan sebelumnya
-  showFaceConfirmPopup.value = true
-}
-
-function confirmDetectionYes() {
-  showFaceConfirmPopup.value = false
-  startCountdown()
-}
-
-function confirmDetectionNo() {
-  showFaceConfirmPopup.value = false
-  startLiveDetection() // lanjutkan deteksi lagi
-}
-
 async function retryBriefing() {
   // Hapus cache lama agar tidak pakai yang terpotong
   localStorage.removeItem('classos_brief_cache')
@@ -1846,8 +1965,10 @@ onMounted(() => {
   if (linkedUser.value) {
     loadFavorites()
     // Pre-load model kalau guru sudah login sebelumnya
-    // loadCocoModel().catch(e => console.warn('[coco-ssd] preload gagal:', e))
+    // loadPersonModel().catch(e => console.warn('[person-detection] preload gagal:', e))
   }
+
+  nextTick(updateChannelScrollState)
 
   // ✅ Daftarkan callback navigasi ke store
   playerStore.setNavigationCallback((path, query) => {
@@ -1891,7 +2012,6 @@ onUnmounted(() => {
   clearInterval(heroTimer)
   stopCamera()
   closeEndClass()
-  stopLiveDetection() // ← tambahkan
   _mediaStream?.getTracks().forEach(t => t.stop())
   synth.cancel()
   playerStore.setNavigationCallback(null as any)
@@ -1929,19 +2049,44 @@ onUnmounted(() => {
       :is-edukasi-playing="isEdukasiPlaying" :progress-percent="progressPercent" :displayed="displayed"
       @play="playEdukasiSong" @seek="seekEdukasi" @seek-start="onEdukasiSeekStart" />
 
-    <!-- Channel Switcher (tampil jika ada channels dari API) -->
-    <div v-if="contentStore.channels.length" class="mb-4 flex gap-2 overflow-x-auto scrollbar-hide">
-      <button v-for="ch in contentStore.channels" :key="ch.id_channel"
-        class="flex-shrink-0 px-3 py-1.5 rounded-full text-xs font-bold transition-colors whitespace-nowrap" :class="contentStore.activeChannelId === ch.id_channel
-          ? 'bg-brand-green text-white'
-          : 'dark:bg-gray-800 bg-gray-100 dark:text-gray-300 text-gray-600 hover:dark:bg-gray-700'"
-        @click="switchChannel(ch.id_channel)">
-        {{ ch.nama_channel }}
+    <!-- Channel Switcher (tampil jika ada channels dari API) — sama persis
+         gayanya dengan StikerNewsView.vue (gradient fade + panah scroll) -->
+    <div v-if="contentStore.channels.length" class="relative mb-5">
+      <!-- Gradient fade kiri -->
+      <div class="pointer-events-none absolute left-0 top-0 bottom-1 w-12 z-[5] bg-gradient-to-r dark:from-[#121212] from-[#f8f9fb] to-transparent transition-opacity duration-200"
+        :class="canScrollLeft ? 'opacity-100' : 'opacity-0'" />
+      <!-- Gradient fade kanan -->
+      <div class="pointer-events-none absolute right-0 top-0 bottom-1 w-12 z-[5] bg-gradient-to-l dark:from-[#121212] from-[#f8f9fb] to-transparent transition-opacity duration-200"
+        :class="canScrollRight ? 'opacity-100' : 'opacity-0'" />
+
+      <div ref="channelScrollRef" class="flex gap-2 overflow-x-auto scrollbar-hide scroll-smooth px-1 py-1"
+        @scroll="updateChannelScrollState">
+        <button v-for="ch in contentStore.channels" :key="ch.id_channel" @click="switchChannel(ch.id_channel)"
+          class="flex-shrink-0 px-4 py-2 rounded-full text-xs font-bold border transition-all duration-200 whitespace-nowrap"
+          :class="contentStore.activeChannelId === ch.id_channel
+            ? 'bg-brand-green border-brand-green text-white shadow-lg shadow-brand-green/30 scale-[1.03]'
+            : 'dark:bg-zinc-900 bg-white dark:border-zinc-700 border-gray-200 dark:text-gray-300 text-gray-600 hover:border-brand-green/50 hover:dark:bg-zinc-800 hover:bg-gray-50'">
+          {{ localizeChannelName(ch.nama) }}
+        </button>
+      </div>
+
+      <!-- Panah kiri -->
+      <button @click="scrollChannels('left')"
+        class="absolute left-0 top-1/2 -translate-y-1/2 z-10 w-8 h-8 rounded-full flex items-center justify-center shadow-md dark:bg-zinc-800 bg-white dark:text-gray-200 text-gray-600 hover:scale-110 active:scale-95 transition-all duration-200"
+        :class="canScrollLeft ? 'opacity-100' : 'opacity-0 pointer-events-none'" title="Scroll ke kiri">
+        <i class="ri-arrow-left-s-line text-lg" />
+      </button>
+
+      <!-- Panah kanan -->
+      <button @click="scrollChannels('right')"
+        class="absolute right-0 top-1/2 -translate-y-1/2 z-10 w-8 h-8 rounded-full flex items-center justify-center shadow-md dark:bg-zinc-800 bg-white dark:text-gray-200 text-gray-600 hover:scale-110 active:scale-95 transition-all duration-200"
+        :class="canScrollRight ? 'opacity-100' : 'opacity-0 pointer-events-none'" title="Scroll ke kanan">
+        <i class="ri-arrow-right-s-line text-lg" />
       </button>
     </div>
 
     <!-- StikerNews Pilihan -->
-    <StikerNewsRecommended :api-random-items="apiRandomItems" :local-random-news="localRandomNews"
+    <StikerNewsRecommended :api-random-items="apiRandomItems"
       :loading="contentStore.loading" :channel-items="channelItems" @play="playStikerRandom"
       @detail="handleClickDetailChoose" />
 
@@ -1974,7 +2119,7 @@ onUnmounted(() => {
       @toggle-tts="startBriefingTTS" @complete="completeBriefing" @retry="retryBriefing" />
 
     <ListeningModal v-model="showListeningPopup" :listening-elapsed="listeningElapsed"
-      :listening-status="listeningStatus" :step-status="stepStatus.listening"
+      :listening-status="listeningStatus" :step-status="stepStatus.listening ?? 'locked'"
       :submitting-listening="submittingListening" :format-listening-time="formatListeningTime"
       @toggle="handleListeningClickWithTimer" @complete="completeListening" />
 
@@ -1987,9 +2132,8 @@ onUnmounted(() => {
     <EndClassModal ref="endClassModalRef" v-model="showEndClassPopup" :captured-photo="capturedPhoto"
       :is-detecting="isDetecting" :face-count="faceCount" :countdown="countdown" :show-flash="showFlash"
       :end-class-note="endClassNote" :is-recording-note="isRecordingNote" :submitting-end-class="submittingEndClass"
-      :show-face-confirm="showFaceConfirmPopup" @update:end-class-note="endClassNote = $event" @close="closeEndClass"
-      @toggle-note-recording="toggleNoteRecording" @request-confirm="requestConfirmDetection"
-      @confirm-yes="confirmDetectionYes" @confirm-no="confirmDetectionNo" @retake="retakePhoto"
+      @update:end-class-note="endClassNote = $event" @close="closeEndClass"
+      @toggle-note-recording="toggleNoteRecording" @take-photo="startCountdown" @retake="retakePhoto"
       @submit="submitEndClass" />
 
     <!-- Konfirmasi Ganti Akun -->

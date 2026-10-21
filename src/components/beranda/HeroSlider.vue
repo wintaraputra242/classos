@@ -45,8 +45,8 @@ const playerStore = usePlayerStore()
     </div>
 
     <!-- Slides -->
-    <TransitionGroup v-else name="slide-fade">
-      <div v-if="currentItem" :key="currentIndex" class="relative z-10 flex items-center pl-8" style="height: 280px">
+    <TransitionGroup v-else-if="currentItem" name="slide-fade">
+      <div :key="currentIndex" class="relative z-10 flex items-center pl-8" style="height: 280px">
 
         <!-- Gambar background blur -->
         <div v-if="currentItem.gambar_url"
@@ -123,25 +123,41 @@ const playerStore = usePlayerStore()
       </div>
     </TransitionGroup>
 
-    <!-- Prev / Next -->
-    <button @click="emit('go-to', (currentIndex - 1 + heroItems.length) % heroItems.length)"
-      class="absolute left-3 top-1/2 -translate-y-1/2 z-20 w-8 h-8 rounded-full bg-black/20 hover:bg-black/40 text-white flex items-center justify-center transition-colors">
-      <i class="ri-arrow-left-s-line text-lg" />
-    </button>
-    <button @click="emit('go-to', (currentIndex + 1) % heroItems.length)"
-      class="absolute right-3 top-1/2 -translate-y-1/2 z-20 w-8 h-8 rounded-full bg-black/20 hover:bg-black/40 text-white flex items-center justify-center transition-colors">
-      <i class="ri-arrow-right-s-line text-lg" />
-    </button>
-
-    <!-- Dots -->
-    <div class="absolute bottom-3 left-1/2 -translate-x-1/2 z-20 flex gap-1.5">
-      <button v-for="(_, i) in heroItems" :key="i" @click="emit('go-to', i)"
-        class="h-2 rounded-full transition-all duration-300" :class="[
-          i === currentIndex ? 'w-5' : 'w-2 opacity-40',
-          themeStore.mode === 'dark'
-            ? (i === currentIndex ? 'bg-brand-green' : 'bg-white')
-            : (i === currentIndex ? 'bg-red-600' : 'bg-gray-800')
-        ]" />
+    <!-- ✅ Empty state — sebelumnya kalau heroItems kosong (mis. kategori yang
+         dipilih belum ada kontennya), bagian ini cuma nge-render kotak kosong
+         polos (tidak ketangkep skeleton loading, tidak ketangkep TransitionGroup
+         karena currentItem null). Sekarang ada pesan yang jelas. -->
+    <div v-else class="relative z-10 flex flex-col items-center justify-center h-full text-center px-6">
+      <i class="ri-inbox-line text-4xl mb-2" :class="themeStore.mode === 'dark' ? 'text-gray-700' : 'text-gray-300'" />
+      <p class="text-sm font-bold" :class="themeStore.mode === 'dark' ? 'text-gray-500' : 'text-gray-400'">
+        Belum ada konten untuk kategori ini
+      </p>
+      <p class="text-xs mt-0.5" :class="themeStore.mode === 'dark' ? 'text-gray-600' : 'text-gray-400'">
+        Coba pilih kategori lain di atas
+      </p>
     </div>
+
+    <!-- Prev / Next -->
+    <template v-if="heroItems.length > 1">
+      <button @click="emit('go-to', (currentIndex - 1 + heroItems.length) % heroItems.length)"
+        class="absolute left-3 top-1/2 -translate-y-1/2 z-20 w-8 h-8 rounded-full bg-black/20 hover:bg-black/40 text-white flex items-center justify-center transition-colors">
+        <i class="ri-arrow-left-s-line text-lg" />
+      </button>
+      <button @click="emit('go-to', (currentIndex + 1) % heroItems.length)"
+        class="absolute right-3 top-1/2 -translate-y-1/2 z-20 w-8 h-8 rounded-full bg-black/20 hover:bg-black/40 text-white flex items-center justify-center transition-colors">
+        <i class="ri-arrow-right-s-line text-lg" />
+      </button>
+
+      <!-- Dots -->
+      <div class="absolute bottom-3 left-1/2 -translate-x-1/2 z-20 flex gap-1.5">
+        <button v-for="(_, i) in heroItems" :key="i" @click="emit('go-to', i)"
+          class="h-2 rounded-full transition-all duration-300" :class="[
+            i === currentIndex ? 'w-5' : 'w-2 opacity-40',
+            themeStore.mode === 'dark'
+              ? (i === currentIndex ? 'bg-brand-green' : 'bg-white')
+              : (i === currentIndex ? 'bg-red-600' : 'bg-gray-800')
+          ]" />
+      </div>
+    </template>
   </div>
 </template>

@@ -1,6 +1,6 @@
 <!-- components/EndClassModal.vue -->
 <script setup lang="ts">
-import { ref } from 'vue'
+import { ref, watch, onUnmounted } from 'vue'
 
 const props = defineProps<{
   modelValue: boolean
@@ -12,7 +12,6 @@ const props = defineProps<{
   isRecordingNote: boolean
   submittingEndClass: boolean
   isDetecting: boolean
-  showFaceConfirm: boolean
 }>()
 
 const emit = defineEmits<{
@@ -21,9 +20,7 @@ const emit = defineEmits<{
   (e: 'update:endClassNote', value: string): void
   (e: 'close'): void
   (e: 'toggle-note-recording'): void
-  (e: 'request-confirm'): void // ✅ ganti dari 'start-countdown'
-  (e: 'confirm-yes'): void // ✅ tambahan
-  (e: 'confirm-no'): void // ✅ tambahan
+  (e: 'take-photo'): void
   (e: 'retake'): void
   (e: 'submit'): void
 }>()
@@ -33,7 +30,6 @@ const emit = defineEmits<{
 // tanpa perlu refactor besar logic kamera yang sudah ada di parent.
 const videoEndClassRef = ref<HTMLVideoElement | null>(null)
 const canvasRef = ref<HTMLCanvasElement | null>(null)
-const overlayCanvasRef = ref<HTMLCanvasElement | null>(null)
 
 const isEditingFaceCount = ref(false)
 const editFaceCountValue = ref(0)
@@ -52,8 +48,35 @@ function confirmEditFaceCount() {
   isEditingFaceCount.value = false
 }
 
+// ✅ Model deteksinya cukup besar (~99MB), jadi loading-nya memang bisa makan
+// waktu di koneksi lambat. Supaya tidak terasa "diam/macet", teks status
+// bergilir tiap beberapa detik — bukan progress asli (kita tidak punya info
+// persentase dari tf.loadGraphModel), tapi cukup untuk kasih kesan masih aktif.
+const detectingMessages = [
+  'Mempersiapkan detektor...',
+  'Mengunduh model deteksi...',
+  'Hampir siap...',
+]
+const detectingMessageIndex = ref(0)
+let _detectingMessageTimer: ReturnType<typeof setInterval> | null = null
 
-defineExpose({ videoEndClassRef, canvasRef, overlayCanvasRef })
+watch(() => props.isDetecting, (detecting) => {
+  if (detecting) {
+    detectingMessageIndex.value = 0
+    _detectingMessageTimer = setInterval(() => {
+      detectingMessageIndex.value = (detectingMessageIndex.value + 1) % detectingMessages.length
+    }, 2500)
+  } else if (_detectingMessageTimer) {
+    clearInterval(_detectingMessageTimer)
+    _detectingMessageTimer = null
+  }
+}, { immediate: true })
+
+onUnmounted(() => {
+  if (_detectingMessageTimer) clearInterval(_detectingMessageTimer)
+})
+
+defineExpose({ videoEndClassRef, canvasRef })
 </script>
 
 <template>
@@ -86,9 +109,6 @@ defineExpose({ videoEndClassRef, canvasRef, overlayCanvasRef })
               <img v-else :src="capturedPhoto" class="w-full h-full object-cover" />
               <canvas ref="canvasRef" class="hidden" />
 
-              <canvas v-if="!capturedPhoto" ref="overlayCanvasRef"
-                class="absolute inset-0 w-full h-full pointer-events-none" style="object-fit: cover;" />
-
               <Transition name="countdown-pop" mode="out-in">
                 <div v-if="countdown > 0" :key="countdown"
                   class="absolute inset-0 flex items-center justify-center bg-black/0">
@@ -99,21 +119,19 @@ defineExpose({ videoEndClassRef, canvasRef, overlayCanvasRef })
               </Transition>
 
               <div v-if="!capturedPhoto" class="absolute bottom-2 left-2 right-2 flex items-center justify-between">
-                <div class="flex items-center gap-2.5 bg-black/70 px-5 py-3 rounded-full">
-                  <i v-if="isDetecting" class="ri-loader-4-line animate-spin text-white text-xl" />
-                  <i v-else class="ri-group-line text-white text-xl" />
-                  <span class="text-white text-sm font-bold">
-                    {{ isDetecting
-                      ? 'Memuat detektor...'
-                      : faceCount === null
-                        ? 'Mendeteksi...'
-                        : `${faceCount} orang terdeteksi` }}
-                  </span>
-                </div>
-
-                <div class="flex items-center gap-1.5 bg-black/60 px-3 py-1.5 rounded-full">
-                  <span class="w-1.5 h-1.5 rounded-full bg-red-500 animate-pulse" />
-                  <span class="text-white text-[10px] font-bold">LIVE</span>
+                <div class="bg-black/70 rounded-2xl px-5 py-3 overflow-hidden" :class="isDetecting ? 'w-56' : ''">
+                  <div class="flex items-center gap-2.5">
+                    <i v-if="isDetecting" class="ri-loader-4-line animate-spin text-white text-xl flex-shrink-0" />
+                    <i v-else class="ri-camera-fill text-white text-xl flex-shrink-0" />
+                    <Transition name="fade" mode="out-in">
+                      <span :key="isDetecting ? detectingMessageIndex : 'ready'" class="text-white text-sm font-bold">
+                        {{ isDetecting ? detectingMessages[detectingMessageIndex] : 'Siap mengambil foto' }}
+                      </span>
+                    </Transition>
+                  </div>
+                  <div v-if="isDetecting" class="mt-2 h-1 rounded-full bg-white/20 overflow-hidden">
+                    <div class="h-full w-1/3 rounded-full bg-white/80" style="animation: indeterminate 1.2s ease-in-out infinite" />
+                  </div>
                 </div>
               </div>
 
@@ -133,14 +151,19 @@ defineExpose({ videoEndClassRef, canvasRef, overlayCanvasRef })
 
                 <div class="flex-1 min-w-0">
                   <p class="text-[10px] dark:text-gray-500 text-gray-400">Siswa terdeteksi</p>
-                  <p class="text-base font-black dark:text-white text-gray-900 leading-none">
+                  <p v-if="isDetecting && faceCount === null"
+                    class="text-sm font-bold dark:text-gray-300 text-gray-600 flex items-center gap-1.5">
+                    <i class="ri-loader-4-line animate-spin text-xs" />
+                    Menganalisa foto...
+                  </p>
+                  <p v-else class="text-base font-black dark:text-white text-gray-900 leading-none">
                     {{ faceCount ?? 0 }}
                     <span class="text-xs font-normal dark:text-gray-400 text-gray-500 ml-1">orang</span>
                   </p>
                 </div>
 
                 <!-- Mode tampil -->
-                <button v-if="!isEditingFaceCount" @click="startEditFaceCount"
+                <button v-if="!isEditingFaceCount && !(isDetecting && faceCount === null)" @click="startEditFaceCount"
                   class="flex items-center gap-1.5 px-2.5 py-1.5 rounded-lg dark:bg-zinc-700 bg-gray-200 hover:opacity-80 transition-opacity flex-shrink-0">
                   <i class="ri-pencil-line text-[10px] dark:text-gray-300 text-gray-500" />
                   <span class="text-[10px] font-bold dark:text-gray-300 text-gray-500">Edit</span>
@@ -209,7 +232,7 @@ defineExpose({ videoEndClassRef, canvasRef, overlayCanvasRef })
                 class="flex-1 py-2.5 rounded-xl text-xs font-bold dark:bg-zinc-800 bg-gray-100 dark:text-gray-300 text-gray-600 hover:opacity-80 transition-opacity">
                 Batal
               </button>
-              <button @click="emit('request-confirm')" :disabled="isDetecting || countdown > 0"
+              <button @click="emit('take-photo')" :disabled="isDetecting || countdown > 0"
                 class="flex-1 py-2.5 rounded-xl text-xs font-bold bg-brand-red dark:bg-brand-green text-white flex items-center justify-center gap-1.5 disabled:opacity-40 disabled:cursor-not-allowed hover:opacity-90 transition-opacity">
                 <i class="ri-camera-fill" />
                 {{ countdown > 0 ? `Bersiap... ${countdown}` : 'Ambil Foto Sekarang' }}
@@ -221,7 +244,7 @@ defineExpose({ videoEndClassRef, canvasRef, overlayCanvasRef })
                 <i class="ri-refresh-line" />
                 Ulangi
               </button>
-              <button @click="emit('submit')" :disabled="submittingEndClass"
+              <button @click="emit('submit')" :disabled="submittingEndClass || (isDetecting && faceCount === null)"
                 class="flex-1 py-2.5 rounded-xl text-xs font-bold bg-brand-red dark:bg-brand-green text-white hover:opacity-90 transition-opacity flex items-center justify-center gap-1 disabled:opacity-50 disabled:cursor-not-allowed">
                 <i :class="submittingEndClass ? 'ri-loader-4-line animate-spin' : 'ri-check-line'" />
                 {{ submittingEndClass ? 'Mengevaluasi...' : 'Selesaikan Sesi' }}
@@ -230,38 +253,19 @@ defineExpose({ videoEndClassRef, canvasRef, overlayCanvasRef })
           </div>
 
         </div>
-
-        <!-- Popup konfirmasi jumlah wajah -->
-        <Transition name="fade">
-          <div v-if="showFaceConfirm" class="fixed inset-0 z-[10000] flex items-center justify-center p-4">
-            <div class="absolute inset-0 bg-black/70" />
-            <div
-              class="relative w-full max-w-sm dark:bg-zinc-900 bg-white rounded-2xl shadow-2xl overflow-hidden p-6 text-center">
-              <div class="w-14 h-14 rounded-full bg-brand-green/15 flex items-center justify-center mx-auto mb-4">
-                <i class="ri-group-line text-2xl text-brand-green" />
-              </div>
-
-              <p class="text-sm dark:text-gray-300 text-gray-600 mb-1">Terdeteksi</p>
-              <p class="text-4xl font-black dark:text-white text-gray-900 mb-1">
-                {{ faceCount ?? 0 }} <span class="text-base font-normal dark:text-gray-400 text-gray-500">siswa</span>
-              </p>
-              <p class="text-xs dark:text-gray-500 text-gray-400 mb-6">Apakah jumlah ini sudah sesuai?</p>
-
-              <div class="flex gap-2">
-                <button @click="emit('confirm-no')"
-                  class="flex-1 py-2.5 rounded-xl text-xs font-bold dark:bg-zinc-800 bg-gray-100 dark:text-gray-300 text-gray-600 hover:opacity-80 transition-opacity">
-                  Belum, Deteksi Ulang
-                </button>
-                <button @click="emit('confirm-yes')"
-                  class="flex-1 py-2.5 rounded-xl text-xs font-bold bg-brand-red dark:bg-brand-green text-white hover:opacity-90 transition-opacity flex items-center justify-center gap-1.5">
-                  <i class="ri-check-line" />
-                  Ya, Sudah Benar
-                </button>
-              </div>
-            </div>
-          </div>
-        </Transition>
       </div>
     </Transition>
   </Teleport>
 </template>
+
+<style scoped>
+@keyframes indeterminate {
+  0% {
+    transform: translateX(-100%);
+  }
+
+  100% {
+    transform: translateX(300%);
+  }
+}
+</style>

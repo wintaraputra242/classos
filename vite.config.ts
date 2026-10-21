@@ -90,10 +90,21 @@ export default defineConfig({
   server: {
     proxy: {
       '/api-dashboard': {
-        target: 'https://classos.isn-speed.com',
-        // target: 'https://classos-beta.isn-speed.com',
+        // target: 'https://classos.isn-speed.com',
+        target: 'https://classos-beta.isn-speed.com',
         changeOrigin: true,
         rewrite: (path) => path.replace(/^\/api-dashboard/, '/api'),
+      },
+      // ✅ public/detect/detect-head-count.php TIDAK dieksekusi Vite dev server
+      // (cuma disajikan sebagai teks mentah) — supaya bisa dites lokal tanpa
+      // deploy, jalankan `php -S localhost:8000 -t public` di terminal
+      // terpisah sebelum `npm run dev`, baru proxy ini akan benar-benar
+      // meneruskan ke PHP yang jalan beneran. Sengaja TIDAK pakai prefix /api
+      // karena itu sudah direservasi untuk backend utama (lihat alasannya di
+      // komentar atas detect-head-count.php).
+      '/detect/detect-head-count.php': {
+        target: 'http://localhost:8000',
+        changeOrigin: true,
       }
     }
   },
